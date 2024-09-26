@@ -1,6 +1,6 @@
 ---
 title: 抽象语法树（AST）
-published: 2024-9-26
+published: 2024-09-26
 description: 编译器翻译高级语言的第一步便是生成AST，它记录了各部分间的抽象结构。
 image: ""
 tags: [编译器，基本原理]
