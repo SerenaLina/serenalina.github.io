@@ -1,0 +1,415 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="author" content="Tian"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>AnxChip中亟待解决的问题分析</title><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/normalize/3.0.3/normalize.min.css"><link rel="stylesheet" type="text/css" href="/css/carbon.css"><script defer="defer" src="//cdn.jsdelivr.net/jquery/2.1.4/jquery.min.js"></script><script defer="defer" src="//cdn.jsdelivr.net/jquery.pjax/1.9.5/jquery.pjax.min.js"></script><link rel="stylesheet" href="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.css" type="text/css" media="screen"><script defer="defer" type="text/javascript" src="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.pack.js"></script><script>var performFancybox = true;</script><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/katex/0.5.0/katex.min.css"><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/katex.min.js"></script><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/contrib/auto-render.min.js"></script><script>var doRenderMath = 'katex';</script><script defer="defer" src="/js/carbon.js"></script><meta name="generator" content="Hexo 8.1.1"></head><body><div id="container"><div id="banner"><h1 id="site-title"><a href="/">Tian`s Blog</a></h1><p id="site-subtitle"></p></div><div id="content"><div class="meta"><h2 class="article-title"><a href="/2026/07/04/LoongArch32-CPU-Timing-and-Architecture-Vulnerabilities">AnxChip中亟待解决的问题分析</a></h2><div class="article-date"><a href="javascript:void(0);" class="extra-switch">2026-07-04</a></div></div><div class="extra"><span class="Tags">Tags: <a href="/tags/CPU%E8%AE%BE%E8%AE%A1/">CPU设计</a>, <a href="/tags/LoongArch/">LoongArch</a>, <a href="/tags/Verilog/">Verilog</a>, <a href="/tags/%E8%AE%A1%E7%AE%97%E6%9C%BA%E4%BD%93%E7%B3%BB%E7%BB%93%E6%9E%84/">计算机体系结构</a>, <a href="/tags/%E6%97%B6%E5%BA%8F%E5%88%86%E6%9E%90/">时序分析</a>.</span></div><div class="extra"><span class="Categories">Categories: <a href="/categories/%E7%A1%AC%E4%BB%B6%E8%AE%BE%E8%AE%A1/">硬件设计</a>.</span></div><div class="article-content"><div class="gallery"></div><h2 id="前言">前言</h2>
+<p>本文是对 AnxChip（LoongArch32 指令集
+CPU）的时序问题与架构漏洞分析。该 CPU 采用 6 级流水线设计，在 Verilator
+仿真环境下主频 75MHz，已通过全部 58 个功能测试点和 20 个性能
+benchmark。前两篇文章分别聚焦于 I-Cache 一致性/RAW
+冒险的调试和整体架构总结，本文则从静态分析的角度，系统性地审查代码中潜在的时序瓶颈和架构设计缺陷。</p>
+<hr />
+<h2 id="situation背景">Situation（背景）</h2>
+<h3 id="cpu-架构概览">CPU 架构概览</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>配置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>指令集</td>
+<td>LoongArch32 (LA32R)</td>
+</tr>
+<tr>
+<td>主频</td>
+<td>75 MHz（Verilator 仿真）</td>
+</tr>
+<tr>
+<td>流水线</td>
+<td>6 级：IF → ID → EXE1 → EXE2 → MEM → WB</td>
+</tr>
+<tr>
+<td>I-Cache</td>
+<td>2 路组相联，256 组，128-bit 行，16KB</td>
+</tr>
+<tr>
+<td>D-Cache</td>
+<td>2 路组相联，256 组，128-bit 行，Write-Back，16KB</td>
+</tr>
+<tr>
+<td>TLB</td>
+<td>16 项全相联，3 端口并行查找（取指/访存/TLBSRCH）</td>
+</tr>
+<tr>
+<td>分支预测</td>
+<td>BTB 模块已实例化</td>
+</tr>
+<tr>
+<td>总线</td>
+<td>AXI4，I/D 共享 axi_bridge</td>
+</tr>
+</tbody>
+</table>
+<h3 id="分析方法">分析方法</h3>
+<ul>
+<li><strong>时序分析</strong>：从 RTL
+代码中提取关键组合逻辑路径，分析逻辑级数和扇出</li>
+<li><strong>架构审查</strong>：逐模块检查功能正确性、边界条件、异常处理一致性</li>
+<li><strong>交叉验证</strong>：结合调试日志中的实际复现记录</li>
+</ul>
+<hr />
+<h2 id="task任务">Task（任务）</h2>
+<p>目标是对整个 CPU 的 RTL 代码进行静态审查，识别以下两类问题：</p>
+<ol type="1">
+<li><strong>时序瓶颈</strong>：可能限制主频提升或导致时序违例的长组合逻辑路径</li>
+<li><strong>架构漏洞</strong>：代码中存在的
+bug、设计缺陷、边界条件处理不完善</li>
+</ol>
+<p>每个问题给出：定位（文件+行号）、根因分析、影响评估、修复建议。</p>
+<hr />
+<h2 id="action行动">Action（行动）</h2>
+<h3 id="一时序问题">一、时序问题</h3>
+<h4 id="id-级转发-mux-exe1-alu-关键路径">1.1 ID 级转发 MUX → EXE1 ALU
+关键路径</h4>
+<p><strong>定位</strong>：<code>core_top.v:567-578</code></p>
+<p><strong>根因</strong>：ID 阶段的操作数转发逻辑是一个 4 级优先级
+MUX，从 EXE1/EXE2/MEM/WB 四个阶段读取 ALU 结果：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// core_top.v:574-578</span></span><br><span class="line"><span class="keyword">assign</span> id_src1_fwd = (exe1_ref_we &amp;&amp; exe1_rd == rf_raddr1 &amp;&amp; rf_raddr1 != <span class="number">5&#x27;d0</span>) ? exe1_alu_result :</span><br><span class="line">                     (exe2_ref_we &amp;&amp; exe2_rd == rf_raddr1 &amp;&amp; rf_raddr1 != <span class="number">5&#x27;d0</span>) ? exe2_alu_result :</span><br><span class="line">                     (mem_ref_we  &amp;&amp; mem_rd  == rf_raddr1 &amp;&amp; rf_raddr1 != <span class="number">5&#x27;d0</span>) ? mem_alu_result  :</span><br><span class="line">                     (wb_rf_we    &amp;&amp; wb_rd   == rf_raddr1 &amp;&amp; rf_raddr1 != <span class="number">5&#x27;d0</span>) ? rf_wdata         :</span><br><span class="line">                     rf_rdata1;</span><br></pre></td></tr></table></figure>
+<p>关键路径为：<code>exe1_alu_result</code>（EXE1 阶段 ALU 组合输出）→ 5
+位寄存器号比较 → 32 位数据选择 → <code>id_src1_fwd</code> →
+<code>ExE1_reg</code> 的 D 端。这意味着上一条指令的 ALU
+计算结果必须在同一时钟周期内完成转发判断并满足下一条指令的寄存器建立时间。</p>
+<p><strong>影响</strong>：这是整个流水线最长的组合逻辑路径之一。<code>exe1_alu_result</code>
+本身依赖 ALU 的 <code>case</code> 语句（含乘法），加上 4 级 MUX
+和比较器，在 75MHz（13.3ns）下时序余量极小。</p>
+<p><strong>建议</strong>：</p>
+<ul>
+<li>将转发点从 ID 级移到 EXE1 级入口（即 EXE1 从 ID 锁存操作数后，在
+EXE1 内部做转发选择），缩短关键路径</li>
+<li>或采用寄存器分线（register slicing）在转发 MUX
+中间插入一级寄存器，将 6 级流水线改为 7 级</li>
+</ul>
+<h4 id="单周期乘法器">1.2 32×32 单周期乘法器</h4>
+<p><strong>定位</strong>：<code>alu.v:18-19</code></p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> mul_signed_result = <span class="built_in">$signed</span>(src1) * <span class="built_in">$signed</span>(src2);</span><br><span class="line"><span class="keyword">assign</span> mul_unsigned_result = src1 * src2;</span><br></pre></td></tr></table></figure>
+<p><strong>根因</strong>：32×32 有符号和无符号乘法均使用 Verilog
+<code>*</code> 操作符，综合工具会将其映射为单周期组合乘法器。在 FPGA
+上，DSP 块的乘法延迟约为 3-4ns，但 32×32 需要级联多个 DSP 块，延迟可达
+6-8ns。加上后续的 ALU <code>case</code> 选择和寄存器建立时间，在 13.3ns
+的时钟周期内几乎没有余量。</p>
+<p><strong>影响</strong>：如果目标平台从仿真迁移到 FPGA
+综合，乘法器很可能成为关键路径，导致时序违例。当前 75MHz
+主频可能无法在所有 FPGA 上实现。</p>
+<p><strong>建议</strong>：</p>
+<ul>
+<li>将乘法拆为多周期迭代（类似除法器 <code>div.v</code> 的做法），使用
+EXE1 的 <code>ready_go</code> 信号停顿流水线</li>
+<li>或使用 FPGA 的 DSP
+块原语（primitive）进行手工映射，确保单周期时序收敛</li>
+</ul>
+<h4 id="tlb-16-项全相联并行查找">1.3 TLB 16 项全相联并行查找</h4>
+<p><strong>定位</strong>：<code>tlb.v:105-318</code></p>
+<p><strong>根因</strong>：TLB 的 3 个查找端口（s0 取指、s1 访存、s2
+TLBSRCH）各自对 16 项进行并行比较。每项比较涉及 19 位 VPPN 匹配 + 9 位
+VPPN 低位匹配（4KB 页时）+ 10 位 ASID 匹配 + 1 位 G + 1 位 E，共约 40
+位比较逻辑。3 个端口 × 16 项 = 48 个并行比较器。</p>
+<p>输出端是一个 16
+级优先级编码器（<code>s0_index</code>，<code>tlb.v:303-318</code>），级联深度为
+16 级 <code>? :</code> 三元运算：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// tlb.v:303-318</span></span><br><span class="line"><span class="keyword">assign</span> s0_index =  match0[<span class="number">0</span>] ?  <span class="number">4&#x27;d0</span>: </span><br><span class="line">            match0[<span class="number">1</span>] ?  <span class="number">4&#x27;d1</span>:</span><br><span class="line">            match0[<span class="number">2</span>] ?  <span class="number">4&#x27;d2</span>:</span><br><span class="line">            <span class="comment">// ... 16 级级联 ...</span></span><br><span class="line">            match0[<span class="number">15</span>] ?  <span class="number">4&#x27;d15</span>: <span class="number">4&#x27;dx</span>;</span><br></pre></td></tr></table></figure>
+<p><strong>影响</strong>：s0
+端口的查找结果直接进入取指地址翻译异常检测，进而参与
+<code>inst_addr</code> 的生成和 <code>inst_uncached</code>
+的判断。这条路径在 I-Cache 命中检测之前，处于取指关键路径的起始端。</p>
+<p><strong>建议</strong>：</p>
+<ul>
+<li>将 16 项 TLB 拆分为 2 路 8 项的组相联结构，将比较器数量减半</li>
+<li>或对 s0 端口使用寄存器缓存上一周期的查找结果，减少组合深度</li>
+</ul>
+<h4 id="if_ready_go-超长组合链">1.4 <code>if_ready_go</code>
+超长组合链</h4>
+<p><strong>定位</strong>：<code>core_top.v:1580-1587</code></p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> if_ready_go = rst? <span class="number">1&#x27;b1</span>:</span><br><span class="line">                     next_reads_id_rd         ? <span class="number">1&#x27;b0</span> :</span><br><span class="line">                    (if_pc!=<span class="number">32&#x27;h1bfffffc</span> &amp;&amp; !if_to_id_valid &amp;&amp; !id_br_taken_safe &amp;&amp; !br_cancel_fallthrough)? <span class="number">1&#x27;b0</span> :</span><br><span class="line">                    (IF_ready_go == <span class="number">1&#x27;b1</span>) ?     <span class="number">1&#x27;b1</span>:</span><br><span class="line">                    (exe1_ref_we&amp;&amp;exe1_rd!=<span class="number">0</span>&amp;&amp;((id_src1_from_ref&amp;&amp;(rf_raddr1==exe1_rd))||...))? <span class="number">1&#x27;b0</span> :</span><br><span class="line">                    (exe2_ref_we&amp;&amp;exe2_rd!=<span class="number">0</span>&amp;&amp;((id_src1_from_ref&amp;&amp;(rf_raddr1==exe2_rd))||...))? <span class="number">1&#x27;b0</span> :</span><br><span class="line">                    (mem_ref_we&amp;&amp;mem_rd!=<span class="number">0</span>&amp;&amp;((id_src1_from_ref&amp;&amp;(rf_raddr1==mem_rd))||...))?  <span class="number">1&#x27;b0</span>:</span><br><span class="line">                    (wb_rf_we&amp;&amp;wb_rd!=<span class="number">0</span>&amp;&amp;((id_src1_from_ref&amp;&amp;(rf_raddr1==wb_rd))||...))?  <span class="number">1&#x27;b0</span>  : <span class="number">1&#x27;b1</span>;</span><br></pre></td></tr></table></figure>
+<p><strong>根因</strong>：<code>if_ready_go</code> 是 IF
+级的就绪信号，它融合了：</p>
+<ol type="1">
+<li><code>next_reads_id_rd</code>：检查 IF 级指令是否读取 ID
+级指令的目的寄存器（2 个 5 位比较）</li>
+<li><code>IF_ready_go</code>：来自 <code>IF_readygo_state.v</code>
+的状态机输出</li>
+<li>4 级 RAW 冒险检测：每级包含 2 个 5 位寄存器号比较 +
+<code>id_src1_from_ref</code>/<code>id_src2_from_ref</code> 的 AND-OR
+逻辑</li>
+</ol>
+<p>总计约 12 个 5 位比较器 + 多级条件选择，全部是组合逻辑，直接决定
+<code>if_allow_in</code> → <code>id_allow_in</code> → 流水线推进。</p>
+<p><strong>影响</strong>：<code>if_ready_go</code> 的扇出极大——它参与
+<code>if_allow_in_state</code>、<code>ID_Reg</code> 的锁存使能、PC
+寄存器更新等多个路径。在 75MHz 下，这条路径的级数已经接近极限。</p>
+<p><strong>建议</strong>：将 RAW 冒险检测逻辑提取为独立的组合信号
+<code>raw_hazard_stall</code>，在
+<code>if_ready_go</code>、<code>id_ready_go</code>、<code>wb_ready_go</code>、<code>pipline_is_not_stalled</code>
+中复用，避免重复计算。</p>
+<h4 id="冒险检测逻辑四重复制">1.5 冒险检测逻辑四重复制</h4>
+<p><strong>定位</strong>：<code>core_top.v:1580-1618</code></p>
+<p><strong>根因</strong>：完全相同的 RAW 冒险检测逻辑（4 级转发源 × 2
+个源操作数 × 5 位比较）被复制到了 4 个信号中：</p>
+<ul>
+<li><code>if_ready_go</code>（行 1580-1587）</li>
+<li><code>id_ready_go</code>（行 1591-1598）</li>
+<li><code>wb_ready_go</code>（行 1602-1609）</li>
+<li><code>pipline_is_not_stalled</code>（行 1613-1618）</li>
+</ul>
+<p>每个信号的判断逻辑完全一致：检查 EXE1/EXE2/MEM/WB 的
+<code>ref_we</code> + <code>rd</code> 是否与 ID 级的
+<code>rf_raddr1</code>/<code>rf_raddr2</code> 匹配。</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 四处独立但相同的冒险检测逻辑（以 exe1 为例）</span></span><br><span class="line"><span class="comment">// 1. if_ready_go (行 1584)</span></span><br><span class="line">(exe1_ref_we&amp;&amp;exe1_rd!=<span class="number">0</span>&amp;&amp;((id_src1_from_ref&amp;&amp;(rf_raddr1==exe1_rd))||(id_src2_from_ref&amp;&amp;(rf_raddr2==exe1_rd))))? <span class="number">1&#x27;b0</span> :</span><br><span class="line"></span><br><span class="line"><span class="comment">// 2. id_ready_go (行 1594) — 完全相同</span></span><br><span class="line">(exe1_ref_we&amp;&amp;exe1_rd!=<span class="number">0</span>&amp;&amp;((id_src1_from_ref&amp;&amp;(rf_raddr1==exe1_rd))||(id_src2_from_ref&amp;&amp;(rf_raddr2==exe1_rd))))? <span class="number">1&#x27;b0</span> :</span><br><span class="line"></span><br><span class="line"><span class="comment">// 3. wb_ready_go (行 1606) — 完全相同</span></span><br><span class="line">(exe1_ref_we&amp;&amp;exe1_rd!=<span class="number">0</span>&amp;&amp;((id_src1_from_ref&amp;&amp;(rf_raddr1==exe1_rd))||(id_src2_from_ref&amp;&amp;(rf_raddr2==exe1_rd))))? <span class="number">1&#x27;b0</span> :</span><br><span class="line"></span><br><span class="line"><span class="comment">// 4. pipline_is_not_stalled (行 1615) — 完全相同</span></span><br><span class="line">(exe1_ref_we&amp;&amp;exe1_rd!=<span class="number">0</span>&amp;&amp;((id_src1_from_ref&amp;&amp;(rf_raddr1==exe1_rd))||(id_src2_from_ref&amp;&amp;(rf_raddr2==exe1_rd))))? <span class="number">1&#x27;b0</span> :</span><br></pre></td></tr></table></figure>
+<p><strong>影响</strong>：</p>
+<ul>
+<li>综合工具无法自动识别这些重复逻辑进行共享（因为每个信号的优先级和其他条件不同），导致面积和功耗浪费</li>
+<li>4 个信号的输出参与不同的控制路径，增加了扇出和布线拥塞</li>
+</ul>
+<p><strong>建议</strong>：提取公共部分：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> raw_stall = (exe1_ref_we &amp;&amp; exe1_rd != <span class="number">0</span> &amp;&amp;</span><br><span class="line">                  ((id_src1_from_ref &amp;&amp; rf_raddr1 == exe1_rd) ||</span><br><span class="line">                   (id_src2_from_ref &amp;&amp; rf_raddr2 == exe1_rd))) ||</span><br><span class="line">                 <span class="comment">/* ... exe2, mem, wb ... */</span>;</span><br></pre></td></tr></table></figure>
+<p>然后在各 <code>ready_go</code> 信号中引用
+<code>raw_stall</code>。</p>
+<h4 id="i-cache-命中检测与状态机">1.6 I-Cache 命中检测与状态机</h4>
+<p><strong>定位</strong>：<code>icache_two_way.v:58-61</code></p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">19</span>:<span class="number">0</span>] fetch_tag = fetch_paddr[<span class="number">31</span>:<span class="number">12</span>];</span><br><span class="line"><span class="keyword">wire</span> fetch_hit0 = valid0[fetch_index] &amp;&amp; tag0[fetch_index] == fetch_tag;</span><br><span class="line"><span class="keyword">wire</span> fetch_hit1 = valid1[fetch_index] &amp;&amp; tag1[fetch_index] == fetch_tag;</span><br><span class="line"><span class="keyword">wire</span> fetch_hit  = fetch_hit0 || fetch_hit1;</span><br></pre></td></tr></table></figure>
+<p><strong>根因</strong>：Cache 命中检测需要在同一周期内完成：从
+<code>fetch_paddr</code> 中提取 tag 和 index → 读取 SRAM 阵列的
+<code>valid</code> 和 <code>tag</code> → 20 位比较 → 2 路 OR 选择 →
+决定状态机跳转。这条路径包含 SRAM 读取延迟（在 FPGA 上约为
+2-3ns）加上比较器延迟。</p>
+<p><strong>影响</strong>：命中信号直接驱动状态机（<code>S_IDLE → S_HIT_RESP</code>），而状态机输出
+<code>fetch_data_ok</code> 控制 IF 级的推进。如果 SRAM
+读取延迟过大，这条路径会限制 I-Cache 的命中响应速度。</p>
+<p><strong>建议</strong>：在 FPGA 实现时，确保 Cache 阵列使用 Block RAM
+的同步读端口，将 tag 读取延迟一个周期，用流水化的方式处理命中检测。</p>
+<hr />
+<h3 id="二架构漏洞">二、架构漏洞</h3>
+<h4 id="csr-save2save3-寄存器写入地址错误">2.1 CSR SAVE2/SAVE3
+寄存器写入地址错误</h4>
+<p><strong>定位</strong>：<code>csr.v:416-419</code></p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// csr.v:412-419</span></span><br><span class="line"><span class="keyword">if</span>(csr_we &amp;&amp; csr_num==`CSR_SAVE0)       <span class="comment">// SAVE0 — 正确</span></span><br><span class="line">csr_save0_data&lt;= ...;</span><br><span class="line"><span class="keyword">if</span>(csr_we &amp;&amp; csr_num==`CSR_SAVE1)       <span class="comment">// SAVE1 — 正确</span></span><br><span class="line">csr_save1_data&lt;= ...;</span><br><span class="line"><span class="keyword">if</span>(csr_we &amp;&amp; csr_num==`CSR_SAVE0)       <span class="comment">// ← 应为 CSR_SAVE2</span></span><br><span class="line">csr_save2_data&lt;= ...;</span><br><span class="line"><span class="keyword">if</span>(csr_we &amp;&amp; csr_num==`CSR_SAVE0)       <span class="comment">// ← 应为 CSR_SAVE3</span></span><br><span class="line">csr_save3_data&lt;= ...;</span><br></pre></td></tr></table></figure>
+<p><strong>根因</strong>：<code>csr_save2_data</code> 和
+<code>csr_save3_data</code> 的写入条件都使用了
+<code>CSR_SAVE0</code>，而非 <code>CSR_SAVE2</code> 和
+<code>CSR_SAVE3</code>。这是一个典型的复制粘贴错误。注意读取逻辑（<code>csr.v:969-970</code>）是正确的——读取时分别用
+<code>CSR_SAVE2</code> 和 <code>CSR_SAVE3</code> 做选择。</p>
+<p><strong>影响</strong>：对 <code>SAVE2</code> 和 <code>SAVE3</code>
+寄存器的写入操作实际不会生效——写入 <code>SAVE2</code> 或
+<code>SAVE3</code> 时条件不匹配，数据不会被更新。只有写入
+<code>SAVE0</code> 时，<code>SAVE2</code> 和 <code>SAVE3</code>
+会被同时写入与 <code>SAVE0</code>
+相同的数据。功能测试中未暴露此问题，因为测试用例未单独使用 SAVE2/SAVE3
+做独立存储。</p>
+<p><strong>修复</strong>：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span>(csr_we &amp;&amp; csr_num==`CSR_SAVE2)</span><br><span class="line">    csr_save2_data&lt;= ...;</span><br><span class="line"><span class="keyword">if</span>(csr_we &amp;&amp; csr_num==`CSR_SAVE3)</span><br><span class="line">    csr_save3_data&lt;= ...;</span><br></pre></td></tr></table></figure>
+<h4 id="badv-寄存器掩码错误">2.2 BADV 寄存器掩码错误</h4>
+<p><strong>定位</strong>：<code>csr.v:445-447</code></p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// csr.v:445-447</span></span><br><span class="line"><span class="keyword">else</span> <span class="keyword">if</span>(csr_we &amp;&amp; csr_num == `CSR_BADV)</span><br><span class="line"><span class="keyword">begin</span></span><br><span class="line">csr_badv_vaddr &lt;= csr_wmask[`CSR_BADV_VADDR] &amp;csr_wvalue[`CSR_BADV_VADDR] |</span><br><span class="line">                  ~csr_wmask[`CSR_ECFG_LIE] &amp; <span class="number">13&#x27;h1bff</span> &amp;csr_ecfg_lie;</span><br><span class="line">                  <span class="comment">// ~csr_wmask[`CSR_ECFG_LIE] ← 应为 ~csr_wmask[`CSR_BADV_VADDR]</span></span><br><span class="line">                  <span class="comment">// 13&#x27;h1bff &amp; csr_ecfg_lie   ← 应为 csr_badv_vaddr</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+<p><strong>根因</strong>：<code>BADV</code> 寄存器的写入逻辑错误地混入了
+<code>ECFG_LIE</code> 的掩码位和 <code>csr_ecfg_lie</code>
+的数据。正确的掩码写入模式应当是：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">csr_badv_vaddr &lt;= csr_wmask[`CSR_BADV_VADDR] &amp; csr_wvalue[`CSR_BADV_VADDR] |</span><br><span class="line">                  ~csr_wmask[`CSR_BADV_VADDR] &amp; csr_badv_vaddr;</span><br></pre></td></tr></table></figure>
+<p><strong>影响</strong>：当软件通过 CSR 写指令更新 <code>BADV</code>
+寄存器时（如上下文切换时恢复异常上下文），实际写入的值会被
+<code>csr_ecfg_lie</code> 的内容污染——掩码位为 0
+的字段不会被原值保留，而是被替换为 <code>csr_ecfg_lie</code> 的低 13
+位与 <code>0x1bff</code>
+的与结果。功能测试中未触发此问题，因为测试用例通常不手动写 BADV（BADV
+由硬件在异常时自动设置）。</p>
+<p><strong>修复</strong>：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">csr_badv_vaddr &lt;= csr_wmask[`CSR_BADV_VADDR] &amp; csr_wvalue[`CSR_BADV_VADDR] |</span><br><span class="line">                  ~csr_wmask[`CSR_BADV_VADDR] &amp; csr_badv_vaddr;</span><br></pre></td></tr></table></figure>
+<h4 id="外部中断绕过-ecfg.lie-掩码">2.3 外部中断绕过 ECFG.LIE 掩码</h4>
+<p><strong>定位</strong>：<code>interrupt.v:22-27</code> +
+<code>core_top.v:1690</code></p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// interrupt.v:22-27</span></span><br><span class="line"><span class="keyword">wire</span> [<span class="number">12</span>:<span class="number">0</span>] int_masked = csr_estat_is &amp; csr_ecfg_lie;</span><br><span class="line"><span class="keyword">wire</span>        has_internal_int = |int_masked;</span><br><span class="line"><span class="keyword">wire</span>        has_external_int = |ext_intrpt;   <span class="comment">// 直接使用原始外部中断，未经掩码</span></span><br><span class="line"><span class="keyword">wire</span>        has_int = csr_crmd_ie &amp;&amp; (has_internal_int || has_external_int);</span><br></pre></td></tr></table></figure>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// core_top.v:1690</span></span><br><span class="line"><span class="keyword">assign</span> hw_int_in = <span class="number">8&#x27;b0</span>;    <span class="comment">// 硬件中断输入恒为 0</span></span><br></pre></td></tr></table></figure>
+<p><strong>根因</strong>：此问题包含两层错误：</p>
+<ol type="1">
+<li><p><strong>外部中断未注册到
+ESTAT</strong>：<code>core_top.v:1690</code> 将 <code>hw_int_in</code>
+硬编码为 <code>8'b0</code>，导致 <code>csr_estat_is[9:2]</code> 恒为
+0。外部中断信号 <code>intrpt[7:0]</code> 从未进入 ESTAT
+寄存器，软件无法通过读 ESTAT 获知具体哪个外部中断触发。</p></li>
+<li><p><strong>外部中断绕过掩码</strong>：<code>interrupt.v:24</code>
+直接对 <code>ext_intrpt</code> 取或，不经过 <code>csr_ecfg_lie</code>
+掩码检查。这意味着只要
+<code>CRMD.IE=1</code>，任意一个外部中断引脚有效就会触发中断，软件通过
+ECFG.LIE 配置的掩码完全失效。</p></li>
+</ol>
+<p><strong>影响</strong>：在当前仿真测试环境中，外部中断输入
+<code>intrpt</code> 接为全 0，因此此 bug
+不会触发。但在真实硬件场景下（FPGA
+上板或流片），外部设备的中断将无法被屏蔽，且中断处理程序无法从 ESTAT
+读取中断源编号。</p>
+<p><strong>修复</strong>：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// core_top.v: 将外部中断连接到 CSR 的 hw_int_in</span></span><br><span class="line"><span class="keyword">assign</span> hw_int_in = intrpt;</span><br><span class="line"></span><br><span class="line"><span class="comment">// interrupt.v: 移除外部中断旁路，统一走 ESTAT 掩码</span></span><br><span class="line"><span class="keyword">wire</span> [<span class="number">12</span>:<span class="number">0</span>] int_masked = csr_estat_is &amp; csr_ecfg_lie;</span><br><span class="line"><span class="keyword">wire</span>        has_int = csr_crmd_ie &amp;&amp; (|int_masked);</span><br></pre></td></tr></table></figure>
+<h4 id="异常冲刷下-mem-阶段-store-写入窗口">2.4 异常冲刷下 MEM 阶段
+Store 写入窗口</h4>
+<p><strong>定位</strong>：<code>core_top.v:1622-1626</code>（流水线冲刷与
+allow_in 控制）</p>
+<p><strong>根因</strong>：本设计的异常处理采用 WB
+阶段统一检测策略。当异常在 WB 阶段被判定后，<code>trap_flush</code>
+信号冲刷 IF/ID/EXE1/EXE2/MEM 五级流水线。但流水线的冲刷是通过
+<code>allow_in</code> 信号阻止新指令进入各级——对于已经在 MEM
+阶段执行的指令，如果它是一条 store 且已经在上一周期向 D-Cache
+发出了写请求（<code>data_sram_req &amp;&amp; data_sram_addr_ok</code>
+已握手），则该写操作可能已经提交到 D-Cache
+状态机中，冲刷信号无法撤回已发出的 AXI 写事务。</p>
+<p>异常发生时的流水线状态：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">IF    ID    EXE1   EXE2   MEM         WB</span><br><span class="line">[新]   [新]   [新]    [新]   [store?]    [异常指令]</span><br><span class="line">                              ↑</span><br><span class="line">                   如果此处有 store 且已发出 data_sram_req，</span><br><span class="line">                   trap_flush 无法撤回已提交的写请求</span><br></pre></td></tr></table></figure>
+<p><strong>影响</strong>：在以下场景中可能触发问题——一条 store 指令在
+MEM 阶段已向 D-Cache 发出写请求，而同周期 WB
+阶段检测到异常（如前一条指令触发 ALE 或 INE）。异常冲刷清除了 MEM
+阶段的有效标记，但 D-Cache
+状态机可能已经接受了写请求并将在后续周期完成写入。这会导致一条本应被冲刷的
+store 指令完成了内存写入。</p>
+<p>功能测试中未暴露此问题的原因：异常触发时，前面的指令通常不是 store
+指令，或者 store 的 D-Cache
+请求和异常检测不在同一周期。但在密集的异常处理场景（如连续的页错误处理）中，此窗口可能被命中。</p>
+<p><strong>建议</strong>：</p>
+<ul>
+<li>在 MEM 阶段增加 trap_flush 对 data_sram_req 的门控：当
+<code>trap_flush</code> 有效时，强制 <code>data_sram_req = 0</code></li>
+<li>或在 D-Cache 状态机中增加 flush 输入，检测到 flush
+时取消未完成的写操作</li>
+</ul>
+<h4 id="badv-寄存器在-tlb-异常下的覆盖丢失">2.5 BADV 寄存器在 TLB
+异常下的覆盖丢失</h4>
+<p><strong>定位</strong>：<code>csr.v:443-456</code></p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// csr.v:443-456 — BADV 的多个写入源</span></span><br><span class="line"><span class="keyword">if</span>(rst)</span><br><span class="line">    csr_badv_vaddr &lt;= <span class="number">32&#x27;b0</span>;</span><br><span class="line"><span class="keyword">else</span> <span class="keyword">if</span>(wb_ex &amp;&amp; wb_ex_addr_err)</span><br><span class="line">    csr_badv_vaddr &lt;= (wb_ecode==`ECODE_ADE &amp;&amp; wb_esubcode==`ESUBCODE_ADEF) ? wb_pc : wb_ex_ale_addr;</span><br><span class="line"><span class="keyword">else</span> <span class="keyword">if</span>(csr_we &amp;&amp; csr_num == `CSR_BADV)</span><br><span class="line">    csr_badv_vaddr &lt;= <span class="comment">/* 掩码写入（参见 2.2 的 bug） */</span>;</span><br><span class="line"><span class="keyword">else</span> <span class="keyword">if</span>(wb_ex &amp;&amp; (wb_inst_tlb_ex != <span class="number">2&#x27;b0</span>))</span><br><span class="line">    csr_badv_vaddr &lt;= wb_pc;</span><br><span class="line"><span class="keyword">else</span> <span class="keyword">if</span>(wb_ex &amp;&amp; wb_data_tlb_ex != <span class="number">3&#x27;b0</span>)</span><br><span class="line">    csr_badv_vaddr &lt;= wb_data_addr;</span><br></pre></td></tr></table></figure>
+<p><strong>根因</strong>：BADV 寄存器有 4 个写入源，按照 if-else
+优先级链排列。问题在于 <code>csr_we</code>（软件 CSR 写）的优先级高于
+TLB 异常写入（<code>wb_inst_tlb_ex</code> 和
+<code>wb_data_tlb_ex</code>）。如果同一周期内既有软件 CSR 写 BADV
+操作，又有 TLB 异常需要写入 BADV，则 TLB 异常的 BADV
+值会被软件写的值覆盖。</p>
+<p><strong>影响</strong>：在实际运行中，此冲突场景不太可能发生——TLB
+异常是硬件自动触发的，而 CSR
+写是软件主动执行的。只有在异常处理程序内部错误地执行了写 BADV
+操作时才会触发。但按照 LoongArch 架构规范，异常时的硬件 BADV
+写入应当具有最高优先级。</p>
+<p><strong>建议</strong>：调整优先级，将异常相关的 BADV 写入放在软件 CSR
+写之前：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span>(rst)</span><br><span class="line">    csr_badv_vaddr &lt;= <span class="number">32&#x27;b0</span>;</span><br><span class="line"><span class="keyword">else</span> <span class="keyword">if</span>(wb_ex &amp;&amp; wb_ex_addr_err)</span><br><span class="line">    csr_badv_vaddr &lt;= ...;</span><br><span class="line"><span class="keyword">else</span> <span class="keyword">if</span>(wb_ex &amp;&amp; (wb_inst_tlb_ex != <span class="number">2&#x27;b0</span>))</span><br><span class="line">    csr_badv_vaddr &lt;= wb_pc;</span><br><span class="line"><span class="keyword">else</span> <span class="keyword">if</span>(wb_ex &amp;&amp; wb_data_tlb_ex != <span class="number">3&#x27;b0</span>)</span><br><span class="line">    csr_badv_vaddr &lt;= wb_data_addr;</span><br><span class="line"><span class="keyword">else</span> <span class="keyword">if</span>(csr_we &amp;&amp; csr_num == `CSR_BADV)</span><br><span class="line">    csr_badv_vaddr &lt;= <span class="comment">/* 正确的掩码写入 */</span>;</span><br></pre></td></tr></table></figure>
+<hr />
+<h2 id="result结果">Result（结果）</h2>
+<h3 id="问题汇总">问题汇总</h3>
+<table>
+<colgroup>
+<col style="width: 10%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 27%" />
+</colgroup>
+<thead>
+<tr>
+<th>#</th>
+<th>类型</th>
+<th>问题</th>
+<th>定位</th>
+<th>严重性</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1.1</td>
+<td>时序</td>
+<td>ID 级转发 MUX → ALU 关键路径</td>
+<td>core_top.v:567-578</td>
+<td>中</td>
+</tr>
+<tr>
+<td>1.2</td>
+<td>时序</td>
+<td>32×32 单周期乘法器</td>
+<td>alu.v:18-19</td>
+<td>高</td>
+</tr>
+<tr>
+<td>1.3</td>
+<td>时序</td>
+<td>TLB 16 项全相联并行查找</td>
+<td>tlb.v:105-318</td>
+<td>中</td>
+</tr>
+<tr>
+<td>1.4</td>
+<td>时序</td>
+<td>if_ready_go 超长组合链</td>
+<td>core_top.v:1580-1587</td>
+<td>中</td>
+</tr>
+<tr>
+<td>1.5</td>
+<td>时序</td>
+<td>冒险检测逻辑四重复制</td>
+<td>core_top.v:1580-1618</td>
+<td>低</td>
+</tr>
+<tr>
+<td>1.6</td>
+<td>时序</td>
+<td>I-Cache 命中检测与状态机</td>
+<td>icache_two_way.v:58-61</td>
+<td>低</td>
+</tr>
+<tr>
+<td>2.1</td>
+<td>漏洞</td>
+<td>CSR SAVE2/SAVE3 写入地址错误</td>
+<td>csr.v:416-419</td>
+<td>高</td>
+</tr>
+<tr>
+<td>2.2</td>
+<td>漏洞</td>
+<td>BADV 寄存器掩码错误</td>
+<td>csr.v:447</td>
+<td>高</td>
+</tr>
+<tr>
+<td>2.3</td>
+<td>漏洞</td>
+<td>外部中断绕过 ECFG.LIE 掩码</td>
+<td>interrupt.v:24, core_top.v:1690</td>
+<td>高</td>
+</tr>
+<tr>
+<td>2.4</td>
+<td>漏洞</td>
+<td>异常冲刷下 MEM Store 写入窗口</td>
+<td>core_top.v:1622-1626</td>
+<td>中</td>
+</tr>
+<tr>
+<td>2.5</td>
+<td>漏洞</td>
+<td>BADV 寄存器 TLB 异常覆盖丢失</td>
+<td>csr.v:443-456</td>
+<td>低</td>
+</tr>
+</tbody>
+</table>
+<h3 id="测试通过情况">测试通过情况</h3>
+<ul>
+<li><strong>功能测试</strong>：58 个测试点全部通过（82
+个用例），覆盖全部 LA32 指令、异常处理、TLB 操作、Cache
+维护操作和原子指令</li>
+<li><strong>性能测试</strong>：20 个 benchmark 程序的 difftest
+一致性验证通过，包括 CoreMark、Dhrystone、SHA、快速排序等</li>
+<li><strong>验证环境</strong>：Verilator + NEMU 在线 difftest</li>
+</ul>
+<h3 id="时序问题与功能正确性的关系">时序问题与功能正确性的关系</h3>
+<p>本文识别的 6 个时序问题在 Verilator
+仿真环境下不会影响功能正确性——仿真器不检查时序约束，组合逻辑路径的延迟不影响逻辑结果。这些问题只有在
+FPGA 综合或流片时才会暴露为时序违例。其中 1.2（单周期乘法器）和
+1.1（转发 MUX 关键路径）是最可能在综合阶段成为瓶颈的两个问题。</p>
+<p>4 个架构漏洞中，2.1（SAVE2/SAVE3）和 2.2（BADV 掩码）是明确的代码
+bug，在特定使用场景下会导致功能错误；2.3（中断掩码旁路）在当前仿真环境（外部中断恒为
+0）下不会触发，但在真实硬件场景下是严重缺陷；2.4 和 2.5
+是边界条件下的问题，需要构造特定测试场景才能复现。</p>
+</div><nav class="pagination"><a id="right-navigator" href="/2026/07/04/LoongArch32-CPU-Architecture-Overview/">LoongArch32 CPU 架构设计总结</a></nav></div><nav id="footer"><ul id="footer-links"><li><a href="/about">About</a></li><li><a href="/archives">Archives</a></li><li><a href="/atom.xml">RSS</a></li><li><a target="_blank" rel="noopener" href="https://icylogic.net" class="out-site">Theme.Carbon</a></li><li><a target="_blank" rel="noopener" href="https://github.com/hexojs/hexo" class="out-site">Hexo</a></li></ul></nav></div></body></html>
