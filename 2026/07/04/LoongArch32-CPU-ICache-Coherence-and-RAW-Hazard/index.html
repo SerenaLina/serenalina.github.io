@@ -1,16 +1,6 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="author" content="Tian"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>LoongArch32 CPU 设计：I-Cache 一致性与 RAW 冒险分析</title><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/normalize/3.0.3/normalize.min.css"><link rel="stylesheet" type="text/css" href="/css/carbon.css"><script defer="defer" src="//cdn.jsdelivr.net/jquery/2.1.4/jquery.min.js"></script><script defer="defer" src="//cdn.jsdelivr.net/jquery.pjax/1.9.5/jquery.pjax.min.js"></script><link rel="stylesheet" href="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.css" type="text/css" media="screen"><script defer="defer" type="text/javascript" src="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.pack.js"></script><script>var performFancybox = true;</script><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/katex/0.5.0/katex.min.css"><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/katex.min.js"></script><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/contrib/auto-render.min.js"></script><script>var doRenderMath = 'katex';</script><script defer="defer" src="/js/carbon.js"></script><meta name="generator" content="Hexo 8.1.1"></head><body><div id="container"><div id="banner"><h1 id="site-title"><a href="/">Tian`s Blog</a></h1><p id="site-subtitle"></p></div><div id="content"><div class="meta"><h2 class="article-title"><a href="/2026/07/04/LoongArch32-CPU-ICache-Coherence-and-RAW-Hazard">LoongArch32 CPU 设计：I-Cache 一致性与 RAW 冒险分析</a></h2><div class="article-date"><a href="javascript:void(0);" class="extra-switch">2026-07-04</a></div></div><div class="extra"><span class="Tags">Tags: <a href="/tags/CPU%E8%AE%BE%E8%AE%A1/">CPU设计</a>, <a href="/tags/LoongArch/">LoongArch</a>, <a href="/tags/Verilog/">Verilog</a>, <a href="/tags/%E8%AE%A1%E7%AE%97%E6%9C%BA%E4%BD%93%E7%B3%BB%E7%BB%93%E6%9E%84/">计算机体系结构</a>, <a href="/tags/%E9%BE%99%E8%8A%AF%E6%9D%AF/">龙芯杯</a>.</span></div><div class="extra"><span class="Categories">Categories: <a href="/categories/%E7%A1%AC%E4%BB%B6%E8%AE%BE%E8%AE%A1/">硬件设计</a>.</span></div><div class="article-content"><div class="gallery"></div><h2 id="前言">前言</h2>
-<p>本文基于一个自行设计的 LoongArch32 (LA32) 指令集 CPU，采用 STAR
-框架（Situation-Task-Action-Result）整理设计过程中的架构决策、问题定位与调试经验。该
-CPU 在 Verilator 仿真验证环境下主频达到
-75MHz，已通过龙芯官方功能测试集（Chiplab 环境下 58 个测试点）。在运行
-CoreMark 等性能测试程序的调试过程中，我定位并修复了 I-Cache
-取指响应重放问题和流水线 RAW
-冒险的边界缺陷。本文将围绕这两个问题展开详细的代码级分析。</p>
-<hr />
-<h2 id="situation背景">Situation（背景）</h2>
-<h3 id="项目概述">项目概述</h3>
-<p>本项目实现了一个支持 LoongArch32 精简指令集的流水线
-CPU，用于龙芯杯（NSCSCC）竞赛。主要特性如下：</p>
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="author" content="Tian"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>LoongArch32 CPU 设计：I-Cache 一致性与 RAW 冒险分析</title><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/normalize/3.0.3/normalize.min.css"><link rel="stylesheet" type="text/css" href="/css/carbon.css"><script defer="defer" src="//cdn.jsdelivr.net/jquery/2.1.4/jquery.min.js"></script><script defer="defer" src="//cdn.jsdelivr.net/jquery.pjax/1.9.5/jquery.pjax.min.js"></script><link rel="stylesheet" href="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.css" type="text/css" media="screen"><script defer="defer" type="text/javascript" src="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.pack.js"></script><script>var performFancybox = true;</script><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/katex/0.5.0/katex.min.css"><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/katex.min.js"></script><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/contrib/auto-render.min.js"></script><script>var doRenderMath = 'katex';</script><script defer="defer" src="/js/carbon.js"></script><meta name="generator" content="Hexo 8.1.1"></head><body><div id="container"><div id="banner"><h1 id="site-title"><a href="/">Tian`s Blog</a></h1><p id="site-subtitle"></p></div><div id="content"><div class="meta"><h2 class="article-title"><a href="/2026/07/04/LoongArch32-CPU-ICache-Coherence-and-RAW-Hazard">LoongArch32 CPU 设计：I-Cache 一致性与 RAW 冒险分析</a></h2><div class="article-date"><a href="javascript:void(0);" class="extra-switch">2026-07-04</a></div></div><div class="extra"><span class="Tags">Tags: <a href="/tags/CPU%E8%AE%BE%E8%AE%A1/">CPU设计</a>, <a href="/tags/LoongArch/">LoongArch</a>, <a href="/tags/Verilog/">Verilog</a>, <a href="/tags/%E8%AE%A1%E7%AE%97%E6%9C%BA%E4%BD%93%E7%B3%BB%E7%BB%93%E6%9E%84/">计算机体系结构</a>, <a href="/tags/%E9%BE%99%E8%8A%AF%E6%9D%AF/">龙芯杯</a>.</span></div><div class="extra"><span class="Categories">Categories: <a href="/categories/%E7%A1%AC%E4%BB%B6%E8%AE%BE%E8%AE%A1/">硬件设计</a>.</span></div><div class="article-content"><div class="gallery"></div><h2 id="前言"><a href="#前言" class="headerlink" title="前言"></a>前言</h2><p>本文基于一个自行设计的 LoongArch32 (LA32) 指令集 CPU，采用 STAR 框架（Situation-Task-Action-Result）整理设计过程中的架构决策、问题定位与调试经验。该 CPU 在 Verilator 仿真验证环境下主频达到 75MHz，已通过龙芯官方功能测试集（Chiplab 环境下 58 个测试点）。在运行 CoreMark 等性能测试程序的调试过程中，我定位并修复了 I-Cache 取指响应重放问题和流水线 RAW 冒险的边界缺陷。本文将围绕这两个问题展开详细的代码级分析。</p>
+<hr>
+<h2 id="Situation（背景）"><a href="#Situation（背景）" class="headerlink" title="Situation（背景）"></a>Situation（背景）</h2><h3 id="项目概述"><a href="#项目概述" class="headerlink" title="项目概述"></a>项目概述</h3><p>本项目实现了一个支持 LoongArch32 精简指令集的流水线 CPU，用于龙芯杯（NSCSCC）竞赛。主要特性如下：</p>
 <table>
 <thead>
 <tr>
@@ -18,8 +8,7 @@ CPU，用于龙芯杯（NSCSCC）竞赛。主要特性如下：</p>
 <th>配置</th>
 </tr>
 </thead>
-<tbody>
-<tr>
+<tbody><tr>
 <td>指令集</td>
 <td>LoongArch32 (LA32R)</td>
 </tr>
@@ -49,7 +38,7 @@ CPU，用于龙芯杯（NSCSCC）竞赛。主要特性如下：</p>
 </tr>
 <tr>
 <td>总线接口</td>
-<td>AXI4（I/D 共享 axi_bridge）</td>
+<td>AXI4（I&#x2F;D 共享 axi_bridge）</td>
 </tr>
 <tr>
 <td>异常处理</td>
@@ -59,170 +48,86 @@ CPU，用于龙芯杯（NSCSCC）竞赛。主要特性如下：</p>
 <td>验证方法</td>
 <td>Verilator + NEMU 在线 difftest</td>
 </tr>
-</tbody>
-</table>
-<h3 id="流水线结构">流水线结构</h3>
-<p>CPU 采用 6 级流水线设计，各级功能划分如下：</p>
+</tbody></table>
+<h3 id="流水线结构"><a href="#流水线结构" class="headerlink" title="流水线结构"></a>流水线结构</h3><p>CPU 采用 6 级流水线设计，各级功能划分如下：</p>
 <figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">┌──────┐    ┌──────┐    ┌───────┐    ┌───────┐    ┌──────┐    ┌──────┐</span><br><span class="line">│  IF  │───▶│  ID  │───▶│ EXE1  │───▶│ EXE2  │───▶│ MEM  │───▶│  WB  │</span><br><span class="line">│取指  │    │译码  │    │ALU计算│    │访存地址│    │数据访存│   │写回   │</span><br><span class="line">│I-Cache│   │分支判定│   │乘除启动│   │D-Cache│    │结果选择│   │RegFile│</span><br><span class="line">└──────┘    └──────┘    └───────┘    └───────┘    └──────┘    └──────┘</span><br><span class="line">     ↑                                                        ↓</span><br><span class="line">     └────────────────── PC 重定向（异常/分支/ertn）─────────────┘</span><br></pre></td></tr></table></figure>
-<p>与经典的 5 级流水线相比，本设计将执行阶段拆分为 EXE1（ALU 运算）和
-EXE2（访存地址发射）两级。这样做的好处是将 ALU 计算与 D-Cache
-访问解耦，便于时序收敛；但代价是增加了流水线深度，进而加大了分支惩罚和数据冒险的停顿窗口。</p>
-<h3 id="冒险处理机制概述">冒险处理机制概述</h3>
-<p>本 CPU 采用 <strong>转发（Forwarding）+ 停顿（Stall）</strong>
-相结合的冒险处理策略：</p>
+
+<p>与经典的 5 级流水线相比，本设计将执行阶段拆分为 EXE1（ALU 运算）和 EXE2（访存地址发射）两级。这样做的好处是将 ALU 计算与 D-Cache 访问解耦，便于时序收敛；但代价是增加了流水线深度，进而加大了分支惩罚和数据冒险的停顿窗口。</p>
+<h3 id="冒险处理机制概述"><a href="#冒险处理机制概述" class="headerlink" title="冒险处理机制概述"></a>冒险处理机制概述</h3><p>本 CPU 采用 <strong>转发（Forwarding）+ 停顿（Stall）</strong> 相结合的冒险处理策略：</p>
 <ul>
-<li><strong>转发</strong>：在 ID 阶段组合逻辑中，从 EXE1、EXE2、MEM、WB
-四个后级阶段向前级转发数据</li>
-<li><strong>停顿</strong>：通过 <code>ready_go</code> 和
-<code>allow_in</code>
-信号阻塞流水线各级，处理无法通过转发解决的依赖</li>
+<li><strong>转发</strong>：在 ID 阶段组合逻辑中，从 EXE1、EXE2、MEM、WB 四个后级阶段向前级转发数据</li>
+<li><strong>停顿</strong>：通过 <code>ready_go</code> 和 <code>allow_in</code> 信号阻塞流水线各级，处理无法通过转发解决的依赖</li>
 </ul>
-<h3 id="验证环境">验证环境</h3>
-<p>CPU 代码集成在 Chiplab 仿真环境中，使用 Verilator
-进行周期精确仿真，并通过 NEMU 模拟器进行在线
-difftest（差异测试）——每个提交的指令都会与 NEMU
-的执行结果进行比对，一旦出现寄存器或内存状态不一致，仿真立即停止并报告出错
-PC。</p>
-<p>测试集包括： - <strong>功能测试</strong>：82 个测试用例（n1~n81 +
-tlb_initialization），覆盖全部 LA32 指令、异常处理、TLB 操作、Cache
-维护操作（cacop）和原子指令，合计 58 个测试点 -
-<strong>性能测试</strong>：20 个 benchmark 程序，包括
-CoreMark、Dhrystone、SHA、快速排序等</p>
-<hr />
-<h2 id="task任务">Task（任务）</h2>
-<p>在通过全部功能测试后，运行 CoreMark 性能测试时 difftest
-报告了指令执行不一致。调试任务需要解决两个核心问题：</p>
-<ol type="1">
-<li><strong>I-Cache
-取指响应重放问题</strong>：在分支跳转或异常返回后，I-Cache
-中一个尚未完成的旧路径取指请求的响应可能被错误地送入 ID
-阶段，导致执行了已被丢弃路径上的指令。</li>
-<li><strong>RAW 冒险处理边界缺陷</strong>：流水线的转发链覆盖了 EXE1~WB
-四个后级，但遗漏了 ID→ID 窗口（生产者尚未离开 ID
-阶段时消费者已进入）的依赖检测；此外 Load-Use 场景下的 store-data
-转发存在数据通路缺陷。</li>
+<h3 id="验证环境"><a href="#验证环境" class="headerlink" title="验证环境"></a>验证环境</h3><p>CPU 代码集成在 Chiplab 仿真环境中，使用 Verilator 进行周期精确仿真，并通过 NEMU 模拟器进行在线 difftest（差异测试）——每个提交的指令都会与 NEMU 的执行结果进行比对，一旦出现寄存器或内存状态不一致，仿真立即停止并报告出错 PC。</p>
+<p>测试集包括：</p>
+<ul>
+<li><strong>功能测试</strong>：82 个测试用例（n1~n81 + tlb_initialization），覆盖全部 LA32 指令、异常处理、TLB 操作、Cache 维护操作（cacop）和原子指令，合计 58 个测试点</li>
+<li><strong>性能测试</strong>：20 个 benchmark 程序，包括 CoreMark、Dhrystone、SHA、快速排序等</li>
+</ul>
+<hr>
+<h2 id="Task（任务）"><a href="#Task（任务）" class="headerlink" title="Task（任务）"></a>Task（任务）</h2><p>在通过全部功能测试后，运行 CoreMark 性能测试时 difftest 报告了指令执行不一致。调试任务需要解决两个核心问题：</p>
+<ol>
+<li><strong>I-Cache 取指响应重放问题</strong>：在分支跳转或异常返回后，I-Cache 中一个尚未完成的旧路径取指请求的响应可能被错误地送入 ID 阶段，导致执行了已被丢弃路径上的指令。</li>
+<li><strong>RAW 冒险处理边界缺陷</strong>：流水线的转发链覆盖了 EXE1~WB 四个后级，但遗漏了 ID→ID 窗口（生产者尚未离开 ID 阶段时消费者已进入）的依赖检测；此外 Load-Use 场景下的 store-data 转发存在数据通路缺陷。</li>
 </ol>
 <p>任务目标是对这两个问题进行深入的代码级分析，定位根因并修复。</p>
-<hr />
-<h2 id="action行动">Action（行动）</h2>
-<h3 id="一i-cache-取指响应重放问题">一、I-Cache 取指响应重放问题</h3>
-<h4 id="i-cache-架构">1.1 I-Cache 架构</h4>
-<p>I-Cache 采用 2 路组相联设计：</p>
+<hr>
+<h2 id="Action（行动）"><a href="#Action（行动）" class="headerlink" title="Action（行动）"></a>Action（行动）</h2><h3 id="一、I-Cache-取指响应重放问题"><a href="#一、I-Cache-取指响应重放问题" class="headerlink" title="一、I-Cache 取指响应重放问题"></a>一、I-Cache 取指响应重放问题</h3><h4 id="1-1-I-Cache-架构"><a href="#1-1-I-Cache-架构" class="headerlink" title="1.1 I-Cache 架构"></a>1.1 I-Cache 架构</h4><p>I-Cache 采用 2 路组相联设计：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// icache_two_way.v</span></span><br><span class="line"><span class="keyword">reg</span>        valid0 [<span class="number">0</span>:<span class="number">255</span>];    <span class="comment">// Way 0 有效位</span></span><br><span class="line"><span class="keyword">reg</span>        valid1 [<span class="number">0</span>:<span class="number">255</span>];    <span class="comment">// Way 1 有效位</span></span><br><span class="line"><span class="keyword">reg</span> [<span class="number">19</span>:<span class="number">0</span>] tag0   [<span class="number">0</span>:<span class="number">255</span>];    <span class="comment">// Way 0 标签 (PA[31:12])</span></span><br><span class="line"><span class="keyword">reg</span> [<span class="number">19</span>:<span class="number">0</span>] tag1   [<span class="number">0</span>:<span class="number">255</span>];    <span class="comment">// Way 1 标签</span></span><br><span class="line"><span class="keyword">reg</span> [<span class="number">127</span>:<span class="number">0</span>] data0 [<span class="number">0</span>:<span class="number">255</span>];    <span class="comment">// Way 0 缓存行 (4 个字)</span></span><br><span class="line"><span class="keyword">reg</span> [<span class="number">127</span>:<span class="number">0</span>] data1 [<span class="number">0</span>:<span class="number">255</span>];    <span class="comment">// Way 1 缓存行</span></span><br><span class="line"><span class="keyword">reg</span>        used   [<span class="number">0</span>:<span class="number">255</span>];    <span class="comment">// LRU 替换位</span></span><br></pre></td></tr></table></figure>
+
 <p>地址分解：<code>Tag(20-bit) | Index(8-bit) | Word(2-bit) | Byte(2-bit)</code></p>
-<p>I-Cache
-采用阻塞式（Blocking）状态机，同一时刻只处理一个取指请求。Cache Miss
-时通过 AXI 总线从内存 Refill 一个 128-bit 缓存行（4 拍）。</p>
-<h4 id="问题现象">1.2 问题现象</h4>
-<p>运行 CoreMark 时，difftest 在 <code>pc=0x1c0001ac</code> 处报告 store
-指令执行结果与 NEMU 不一致。具体表现为：</p>
+<p>I-Cache 采用阻塞式（Blocking）状态机，同一时刻只处理一个取指请求。Cache Miss 时通过 AXI 总线从内存 Refill 一个 128-bit 缓存行（4 拍）。</p>
+<h4 id="1-2-问题现象"><a href="#1-2-问题现象" class="headerlink" title="1.2 问题现象"></a>1.2 问题现象</h4><p>运行 CoreMark 时，difftest 在 <code>pc=0x1c0001ac</code> 处报告 store 指令执行结果与 NEMU 不一致。具体表现为：</p>
 <ul>
-<li><code>0x1c0001ac</code> 处的 <code>st.w</code>
-指令使用了错误的基地址 <code>$r12 = 0x19</code></li>
+<li><code>0x1c0001ac</code> 处的 <code>st.w</code> 指令使用了错误的基地址 <code>$r12 = 0x19</code></li>
 <li>该地址触发 ALE（地址对齐异常），<code>badvaddr = 0x19</code></li>
-<li>但 <code>0x1c0001b8</code> 处的 <code>ori $r12, $r12, 0x19</code>
-才是写入 <code>0x19</code> 到 <code>$r12</code> 的指令</li>
+<li>但 <code>0x1c0001b8</code> 处的 <code>ori $r12, $r12, 0x19</code> 才是写入 <code>0x19</code> 到 <code>$r12</code> 的指令</li>
 </ul>
-<p>这说明 <code>0x1c0001ac</code> 的 <code>st.w</code> 指令在
-<code>$r12</code> 被 <code>0x1c0001b8</code>
-修改<strong>之后</strong>又被重新执行了一次。</p>
-<h4 id="根因分析">1.3 根因分析</h4>
-<p>通过在 <code>core_top.v</code> 中添加 I-Cache
-取指状态追踪日志（<code>[ICACHE-LATE-1AC]</code>），确认了以下时序：</p>
+<p>这说明 <code>0x1c0001ac</code> 的 <code>st.w</code> 指令在 <code>$r12</code> 被 <code>0x1c0001b8</code> 修改<strong>之后</strong>又被重新执行了一次。</p>
+<h4 id="1-3-根因分析"><a href="#1-3-根因分析" class="headerlink" title="1.3 根因分析"></a>1.3 根因分析</h4><p>通过在 <code>core_top.v</code> 中添加 I-Cache 取指状态追踪日志（<code>[ICACHE-LATE-1AC]</code>），确认了以下时序：</p>
 <figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">Cycle N    : IF 发起 pc=0x1c0001ac 的取指请求 (if_req_pending=1)</span><br><span class="line">Cycle N+1  : ID 阶段检测到分支跳转，PC 重定向到新地址</span><br><span class="line">             → 旧的 0x1c0001ac 请求应被丢弃</span><br><span class="line">Cycle N+2  : 0x1c0001b8 (ori $r12, 0x19) 流入并执行，$r12 被修改</span><br><span class="line">Cycle N+3  : I-Cache 对 0x1c0001ac 的 AXI 响应终于返回 (data_ok)</span><br><span class="line">             → 旧响应被错误地接收为有效指令，0x1c0001ac 的 st.w 重新进入 ID</span><br><span class="line">Cycle N+4  : st.w 使用已被污染的 $r12=0x19 作为基地址 → ALE 异常</span><br></pre></td></tr></table></figure>
-<p>问题的根因在于：<strong>当 PC 重定向发生时，I-Cache/AXI
-总线上可能有一个尚未返回响应的旧取指请求（outstanding
-fetch）。这个旧请求的响应在重定向之后才返回，但原始设计中没有机制来识别和丢弃这个”过期”响应。</strong></p>
+
+<p>问题的根因在于：<strong>当 PC 重定向发生时，I-Cache&#x2F;AXI 总线上可能有一个尚未返回响应的旧取指请求（outstanding fetch）。这个旧请求的响应在重定向之后才返回，但原始设计中没有机制来识别和丢弃这个”过期”响应。</strong></p>
 <p>在原始代码中，取指响应的接收逻辑过于简单：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 原始逻辑（有问题）：只要 data_ok 就接收响应</span></span><br><span class="line"><span class="keyword">always</span> @(<span class="keyword">posedge</span> clk) <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (inst_sram_data_ok) <span class="keyword">begin</span></span><br><span class="line">        <span class="comment">// 直接将响应送入 ID 阶段，不检查是否已被重定向</span></span><br><span class="line">        if_to_id_valid &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line">        if_to_id_pc    &lt;= if_req_pc;</span><br><span class="line">        if_to_id_inst  &lt;= inst_sram_rdata;</span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
-<h4 id="修复方案">1.4 修复方案</h4>
-<p>修复的核心思路是引入
-<strong>取指请求生命周期管理</strong>，跟踪每个取指请求从发起到响应返回的完整状态，并在
-PC 重定向时标记待丢弃的响应：</p>
+
+<h4 id="1-4-修复方案"><a href="#1-4-修复方案" class="headerlink" title="1.4 修复方案"></a>1.4 修复方案</h4><p>修复的核心思路是引入 <strong>取指请求生命周期管理</strong>，跟踪每个取指请求从发起到响应返回的完整状态，并在 PC 重定向时标记待丢弃的响应：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 修复后的 IF 取指响应管理逻辑 (core_top.v)</span></span><br><span class="line"></span><br><span class="line"><span class="keyword">reg</span>        if_req_pending;      <span class="comment">// 是否有未完成的取指请求</span></span><br><span class="line"><span class="keyword">reg</span> [<span class="number">31</span>:<span class="number">0</span>] if_req_pc;           <span class="comment">// 未完成请求的 PC</span></span><br><span class="line"><span class="keyword">reg</span>        if_discard_pending;  <span class="comment">// 是否需要丢弃下一个响应</span></span><br><span class="line"><span class="keyword">reg</span>        if_resp_valid;       <span class="comment">// 响应缓冲有效</span></span><br><span class="line"><span class="keyword">reg</span> [<span class="number">31</span>:<span class="number">0</span>] if_resp_pc;          <span class="comment">// 响应 PC</span></span><br><span class="line"><span class="keyword">reg</span> [<span class="number">31</span>:<span class="number">0</span>] if_resp_inst;        <span class="comment">// 响应指令</span></span><br><span class="line"></span><br><span class="line"><span class="comment">// PC 重定向信号：分支跳转 / BTB 预测失败 / 异常</span></span><br><span class="line"><span class="keyword">wire</span> if_fetch_redirect = id_br_taken_safe || btb_mispredict ||</span><br><span class="line">                         br_cancel_fallthrough || if_pending_wrong_after_resp;</span><br><span class="line"></span><br><span class="line"><span class="comment">// 响应是否应该被丢弃</span></span><br><span class="line"><span class="keyword">wire</span> inst_resp_should_discard = if_discard_pending || if_fetch_redirect;</span><br><span class="line"></span><br><span class="line"><span class="comment">// 只在 data_ok 返回且不应丢弃时才接收响应</span></span><br><span class="line"><span class="keyword">wire</span> accept_inst_resp = inst_sram_data_ok &amp;&amp; inst_resp_has_request</span><br><span class="line">                        &amp;&amp; !inst_resp_should_discard;</span><br><span class="line"></span><br><span class="line"><span class="keyword">always</span> @(<span class="keyword">posedge</span> clk) <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (rst || wb_ex || wb_is_ertn) <span class="keyword">begin</span></span><br><span class="line">        if_req_pending     &lt;= <span class="number">1&#x27;b0</span>;</span><br><span class="line">        if_discard_pending &lt;= <span class="number">1&#x27;b0</span>;</span><br><span class="line">        if_resp_valid      &lt;= <span class="number">1&#x27;b0</span>;</span><br><span class="line">    <span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">begin</span></span><br><span class="line">        <span class="comment">// 1. 重定向发生时，标记待丢弃</span></span><br><span class="line">        <span class="keyword">if</span> (if_fetch_redirect) <span class="keyword">begin</span></span><br><span class="line">            <span class="keyword">if</span> (if_req_pending)</span><br><span class="line">                if_discard_pending &lt;= <span class="number">1&#x27;b1</span>;  <span class="comment">// 有未完成请求，标记丢弃</span></span><br><span class="line">            if_resp_valid &lt;= <span class="number">1&#x27;b0</span>;           <span class="comment">// 清除已缓冲响应</span></span><br><span class="line">        <span class="keyword">end</span></span><br><span class="line"></span><br><span class="line">        <span class="comment">// 2. 新请求发出时记录 PC</span></span><br><span class="line">        <span class="keyword">if</span> (inst_sram_req &amp;&amp; inst_sram_addr_ok) <span class="keyword">begin</span></span><br><span class="line">            if_req_pc       &lt;= pc_inst_addr;</span><br><span class="line">            if_req_pending  &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line">            if_discard_pending &lt;= if_fetch_redirect;</span><br><span class="line">        <span class="keyword">end</span></span><br><span class="line"></span><br><span class="line">        <span class="comment">// 3. 响应返回时处理</span></span><br><span class="line">        <span class="keyword">if</span> (inst_sram_data_ok) <span class="keyword">begin</span></span><br><span class="line">            if_req_pending     &lt;= <span class="number">1&#x27;b0</span>;</span><br><span class="line">            if_discard_pending &lt;= <span class="number">1&#x27;b0</span>;</span><br><span class="line">            <span class="keyword">if</span> (accept_inst_resp) <span class="keyword">begin</span></span><br><span class="line">                if_resp_pc    &lt;= if_req_pending ? if_req_pc : pc_inst_addr;</span><br><span class="line">                if_resp_inst  &lt;= inst_sram_rdata;</span><br><span class="line">                if_resp_valid &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line">            <span class="keyword">end</span></span><br><span class="line">            <span class="comment">// 如果 should_discard，则直接丢弃，不送入 ID</span></span><br><span class="line">        <span class="keyword">end</span></span><br><span class="line"></span><br><span class="line">        <span class="comment">// 4. ID 消费响应</span></span><br><span class="line">        <span class="keyword">if</span> (if_resp_valid &amp;&amp; id_allow_in) <span class="keyword">begin</span></span><br><span class="line">            if_resp_valid &lt;= <span class="number">1&#x27;b0</span>;</span><br><span class="line">        <span class="keyword">end</span></span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
-<p>修复后，IF 到 ID 的数据通路改为通过 <code>if_resp_valid</code>
-缓冲：</p>
+
+<p>修复后，IF 到 ID 的数据通路改为通过 <code>if_resp_valid</code> 缓冲：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> if_to_id_valid = if_resp_valid;</span><br><span class="line"><span class="keyword">assign</span> if_to_id_pc    = if_resp_valid ? if_resp_pc  : <span class="number">32&#x27;b0</span>;</span><br><span class="line"><span class="keyword">assign</span> if_to_id_inst  = if_resp_valid ? if_resp_inst : <span class="number">32&#x27;h02800000</span>;</span><br></pre></td></tr></table></figure>
-<p>这个修复确保了：即使 AXI 总线的取指响应在 PC
-重定向之后才返回，也不会被错误地送入流水线。<code>if_discard_pending</code>
-机制精确地跟踪了”哪个请求应该被丢弃”，避免了误丢有效响应的问题。</p>
-<h4 id="关于-i-cache-一致性的更广泛讨论">1.5 关于 I-Cache
-一致性的更广泛讨论</h4>
-<p>上述问题本质上是 <strong>取指一致性（Fetch Coherence）</strong>
-问题，而非传统意义上的多核 Cache 一致性问题。在单核场景下，I-Cache
-一致性主要涉及以下场景：</p>
-<ol type="1">
-<li><p><strong>自修改代码（Self-Modifying
-Code）</strong>：程序在运行时修改了自己的代码段。LoongArch 通过
-<code>cacop</code> 指令进行 I-Cache 无效化操作来保证一致性。本设计支持
-<code>cacop</code> op0（Index Invalidate）和 op2（Hit
-Invalidate），功能测试中 <code>n73_icacop_op0</code> 和
-<code>n75_icacop_op1</code> 均已通过。</p></li>
-<li><p><strong>异常返回后的取指</strong>：<code>ertn</code>
-指令返回到异常前的 PC，此时如果 I-Cache
-中有旧路径的取指请求尚未完成，就会出现上述问题。这是本次修复的重点。</p></li>
-<li><p><strong>D-Cache Write-Back 与 I-Cache 的一致性</strong>：当
-D-Cache 使用 Write-Back
-策略时，如果代码段的数据被修改但尚未写回内存，I-Cache
-可能读到旧数据。本设计中代码段和数据段使用不同的物理页面，且
-<code>cacop</code>
-指令可以强制写回和无效化，因此在功能测试中未暴露此问题。</p></li>
+
+<p>这个修复确保了：即使 AXI 总线的取指响应在 PC 重定向之后才返回，也不会被错误地送入流水线。<code>if_discard_pending</code> 机制精确地跟踪了”哪个请求应该被丢弃”，避免了误丢有效响应的问题。</p>
+<h4 id="1-5-关于-I-Cache-一致性的更广泛讨论"><a href="#1-5-关于-I-Cache-一致性的更广泛讨论" class="headerlink" title="1.5 关于 I-Cache 一致性的更广泛讨论"></a>1.5 关于 I-Cache 一致性的更广泛讨论</h4><p>上述问题本质上是 <strong>取指一致性（Fetch Coherence）</strong> 问题，而非传统意义上的多核 Cache 一致性问题。在单核场景下，I-Cache 一致性主要涉及以下场景：</p>
+<ol>
+<li><p><strong>自修改代码（Self-Modifying Code）</strong>：程序在运行时修改了自己的代码段。LoongArch 通过 <code>cacop</code> 指令进行 I-Cache 无效化操作来保证一致性。本设计支持 <code>cacop</code> op0（Index Invalidate）和 op2（Hit Invalidate），功能测试中 <code>n73_icacop_op0</code> 和 <code>n75_icacop_op1</code> 均已通过。</p>
+</li>
+<li><p><strong>异常返回后的取指</strong>：<code>ertn</code> 指令返回到异常前的 PC，此时如果 I-Cache 中有旧路径的取指请求尚未完成，就会出现上述问题。这是本次修复的重点。</p>
+</li>
+<li><p><strong>D-Cache Write-Back 与 I-Cache 的一致性</strong>：当 D-Cache 使用 Write-Back 策略时，如果代码段的数据被修改但尚未写回内存，I-Cache 可能读到旧数据。本设计中代码段和数据段使用不同的物理页面，且 <code>cacop</code> 指令可以强制写回和无效化，因此在功能测试中未暴露此问题。</p>
+</li>
 </ol>
-<hr />
-<h3 id="二raw-冒险处理问题">二、RAW 冒险处理问题</h3>
-<h4 id="转发机制">2.1 转发机制</h4>
-<p>本 CPU 的数据转发在 ID
-阶段完成，通过组合逻辑从四个后级阶段（EXE1、EXE2、MEM、WB）中选择最新的写入数据：</p>
+<hr>
+<h3 id="二、RAW-冒险处理问题"><a href="#二、RAW-冒险处理问题" class="headerlink" title="二、RAW 冒险处理问题"></a>二、RAW 冒险处理问题</h3><h4 id="2-1-转发机制"><a href="#2-1-转发机制" class="headerlink" title="2.1 转发机制"></a>2.1 转发机制</h4><p>本 CPU 的数据转发在 ID 阶段完成，通过组合逻辑从四个后级阶段（EXE1、EXE2、MEM、WB）中选择最新的写入数据：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// core_top.v - ID 阶段转发逻辑</span></span><br><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] id_src1_fwd;</span><br><span class="line"><span class="keyword">assign</span> id_src1_fwd = (exe1_ref_we &amp;&amp; exe1_rd == rf_raddr1 &amp;&amp; rf_raddr1 != <span class="number">5&#x27;d0</span>) ? exe1_alu_result :</span><br><span class="line">                     (exe2_ref_we &amp;&amp; exe2_rd == rf_raddr1 &amp;&amp; rf_raddr1 != <span class="number">5&#x27;d0</span>) ? exe2_alu_result :</span><br><span class="line">                     (mem_ref_we  &amp;&amp; mem_rd  == rf_raddr1 &amp;&amp; rf_raddr1 != <span class="number">5&#x27;d0</span>) ? mem_alu_result  :</span><br><span class="line">                     (wb_rf_we    &amp;&amp; wb_rd   == rf_raddr1 &amp;&amp; rf_raddr1 != <span class="number">5&#x27;d0</span>) ? rf_wdata        :</span><br><span class="line">                     rf_rdata1;  <span class="comment">// 无转发，读 RegFile</span></span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] id_src2_fwd;</span><br><span class="line"><span class="keyword">assign</span> id_src2_fwd = (exe1_ref_we &amp;&amp; exe1_rd == rf_raddr2 &amp;&amp; rf_raddr2 != <span class="number">5&#x27;d0</span>) ? exe1_alu_result :</span><br><span class="line">                     (exe2_ref_we &amp;&amp; exe2_rd == rf_raddr2 &amp;&amp; rf_raddr2 != <span class="number">5&#x27;d0</span>) ? exe2_alu_result :</span><br><span class="line">                     (mem_ref_we  &amp;&amp; mem_rd  == rf_raddr2 &amp;&amp; rf_raddr2 != <span class="number">5&#x27;d0</span>) ? mem_alu_result  :</span><br><span class="line">                     (wb_rf_we    &amp;&amp; wb_rd   == rf_raddr2 &amp;&amp; rf_raddr2 != <span class="number">5&#x27;d0</span>) ? rf_wdata        :</span><br><span class="line">                     rf_rdata2;</span><br></pre></td></tr></table></figure>
-<p>转发优先级为 EXE1 &gt; EXE2 &gt; MEM &gt; WB，这是因为越接近 ID
-的阶段拥有越新的数据。</p>
-<h4 id="问题一idid-窗口的冒险遗漏">2.2 问题一：ID→ID 窗口的冒险遗漏</h4>
-<p><strong>问题分析</strong>：转发链覆盖了 EXE1~WB
-四个阶段，但当一条指令在 ID 阶段写寄存器（<code>id_ref_we</code>
-有效），而紧随其后的下一条指令已经进入 IF
-阶段并正在读取同一个寄存器时，由于生产者尚未进入
-EXE1，转发逻辑无法捕获这个依赖。</p>
-<p>这个窗口在功能测试中不容易暴露——因为功能测试中 IF 和 ID
-的推进节奏基本同步。但在性能测试中，I-Cache 命中时 IF 推进较快，而 ID
-阶段可能因各种原因停顿，使得 IF 阶段的指令”追上”了 ID 阶段的指令。</p>
-<p><strong>修复</strong>：在 <code>if_ready_go</code> 中增加 ID→ID
-冒险检测：</p>
+
+<p>转发优先级为 EXE1 &gt; EXE2 &gt; MEM &gt; WB，这是因为越接近 ID 的阶段拥有越新的数据。</p>
+<h4 id="2-2-问题一：ID→ID-窗口的冒险遗漏"><a href="#2-2-问题一：ID→ID-窗口的冒险遗漏" class="headerlink" title="2.2 问题一：ID→ID 窗口的冒险遗漏"></a>2.2 问题一：ID→ID 窗口的冒险遗漏</h4><p><strong>问题分析</strong>：转发链覆盖了 EXE1~WB 四个阶段，但当一条指令在 ID 阶段写寄存器（<code>id_ref_we</code> 有效），而紧随其后的下一条指令已经进入 IF 阶段并正在读取同一个寄存器时，由于生产者尚未进入 EXE1，转发逻辑无法捕获这个依赖。</p>
+<p>这个窗口在功能测试中不容易暴露——因为功能测试中 IF 和 ID 的推进节奏基本同步。但在性能测试中，I-Cache 命中时 IF 推进较快，而 ID 阶段可能因各种原因停顿，使得 IF 阶段的指令”追上”了 ID 阶段的指令。</p>
+<p><strong>修复</strong>：在 <code>if_ready_go</code> 中增加 ID→ID 冒险检测：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// core_top.v - ID→ID RAW 冒险检测</span></span><br><span class="line"><span class="comment">// 当 ID 中的指令写寄存器，而 IF 中的下一条指令读同一寄存器时，停顿 IF</span></span><br><span class="line"><span class="keyword">wire</span> next_rj = if_inst[<span class="number">9</span>:<span class="number">5</span>];</span><br><span class="line"><span class="keyword">wire</span> next_rk = if_inst[<span class="number">14</span>:<span class="number">10</span>];</span><br><span class="line"><span class="keyword">wire</span> next_reads_id_rd = id_ref_we &amp;&amp; id_rd != <span class="number">5&#x27;d0</span> &amp;&amp;</span><br><span class="line">                        ((next_rj == id_rd) || (next_rk == id_rd));</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> if_ready_go = rst ? <span class="number">1&#x27;b1</span> :</span><br><span class="line">                     next_reads_id_rd ? <span class="number">1&#x27;b0</span> :  <span class="comment">// ID→ID 冒险，停顿 IF</span></span><br><span class="line">                     <span class="comment">// ... 其他停顿条件</span></span><br></pre></td></tr></table></figure>
-<h4 id="问题二load-use-冒险的停顿机制">2.3 问题二：Load-Use
-冒险的停顿机制</h4>
-<p>当 load
-指令（<code>ld.w</code>/<code>ld.h</code>/<code>ld.b</code>）在 MEM
-阶段读取 D-Cache 数据时，其结果尚未写回，无法通过标准的转发通路传递给 ID
-阶段的消费者。本设计通过在
-<code>if_ready_go</code>、<code>id_ready_go</code> 和
-<code>pipline_is_not_stalled</code> 中检测 MEM 阶段的 load
-指令依赖来停顿流水线：</p>
+
+<h4 id="2-3-问题二：Load-Use-冒险的停顿机制"><a href="#2-3-问题二：Load-Use-冒险的停顿机制" class="headerlink" title="2.3 问题二：Load-Use 冒险的停顿机制"></a>2.3 问题二：Load-Use 冒险的停顿机制</h4><p>当 load 指令（<code>ld.w</code>&#x2F;<code>ld.h</code>&#x2F;<code>ld.b</code>）在 MEM 阶段读取 D-Cache 数据时，其结果尚未写回，无法通过标准的转发通路传递给 ID 阶段的消费者。本设计通过在 <code>if_ready_go</code>、<code>id_ready_go</code> 和 <code>pipline_is_not_stalled</code> 中检测 MEM 阶段的 load 指令依赖来停顿流水线：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// core_top.v - Load-Use 冒险停顿</span></span><br><span class="line"><span class="comment">// 当 MEM 阶段有 load 指令且 ID 阶段的指令依赖其目标寄存器时，停顿</span></span><br><span class="line"><span class="keyword">assign</span> if_ready_go = <span class="comment">/* ... */</span> :</span><br><span class="line">    (mem_ref_we &amp;&amp; mem_rd != <span class="number">0</span> &amp;&amp;</span><br><span class="line">     ((id_src1_from_ref &amp;&amp; (rf_raddr1 == mem_rd)) ||</span><br><span class="line">      (id_src2_from_ref &amp;&amp; (rf_raddr2 == mem_rd)))) ? <span class="number">1&#x27;b0</span> :</span><br><span class="line">    <span class="comment">/* ... */</span>;</span><br><span class="line"></span><br><span class="line"><span class="comment">// 同样的检测也出现在 id_ready_go 和 pipline_is_not_stalled 中</span></span><br><span class="line"><span class="keyword">assign</span> id_ready_go = <span class="comment">/* ... */</span> :</span><br><span class="line">    (mem_ref_we &amp;&amp; mem_rd != <span class="number">0</span> &amp;&amp;</span><br><span class="line">     ((id_src1_from_ref &amp;&amp; (rf_raddr1 == mem_rd)) ||</span><br><span class="line">      (id_src2_from_ref &amp;&amp; (rf_raddr2 == mem_rd)))) ? <span class="number">1&#x27;b0</span> :</span><br><span class="line">    <span class="comment">/* ... */</span>;</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> pipline_is_not_stalled = <span class="comment">/* ... */</span> :</span><br><span class="line">    (mem_ref_we &amp;&amp; mem_rd != <span class="number">0</span> &amp;&amp;</span><br><span class="line">     ((id_src1_from_ref &amp;&amp; (rf_raddr1 == mem_rd)) ||</span><br><span class="line">      (id_src2_from_ref &amp;&amp; (rf_raddr2 == mem_rd)))) ? <span class="number">1&#x27;b0</span> :</span><br><span class="line">    <span class="comment">/* ... */</span>;</span><br></pre></td></tr></table></figure>
-<p>需要注意的是，MEM 阶段的 <code>mem_ref_we</code> 和
-<code>mem_rd</code> 来自 load 指令的目标寄存器信息，而
-<code>mem_alu_result</code> 在 load
-完成前不可用，因此只能停顿而非转发。</p>
-<h4 id="问题三store-data-转发缺陷">2.4 问题三：Store-Data 转发缺陷</h4>
-<p>在调试 CoreMark 时，difftest 在 <code>pc=0x1c000078</code> 处报告
-store 指令写入的数据与 NEMU 不一致。追踪发现这是一条
-<code>ld.w → st.w</code> 序列：</p>
+
+<p>需要注意的是，MEM 阶段的 <code>mem_ref_we</code> 和 <code>mem_rd</code> 来自 load 指令的目标寄存器信息，而 <code>mem_alu_result</code> 在 load 完成前不可用，因此只能停顿而非转发。</p>
+<h4 id="2-4-问题三：Store-Data-转发缺陷"><a href="#2-4-问题三：Store-Data-转发缺陷" class="headerlink" title="2.4 问题三：Store-Data 转发缺陷"></a>2.4 问题三：Store-Data 转发缺陷</h4><p>在调试 CoreMark 时，difftest 在 <code>pc=0x1c000078</code> 处报告 store 指令写入的数据与 NEMU 不一致。追踪发现这是一条 <code>ld.w → st.w</code> 序列：</p>
 <figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">ld.w  $r15, [$r12 + offset]    // 从内存加载数据到 $r15</span><br><span class="line">...</span><br><span class="line">st.w  $r15, [$r13 + offset]    // 将 $r15 存入内存</span><br></pre></td></tr></table></figure>
-<p>当 <code>ld.w</code> 的数据在 MEM 阶段返回时，<code>st.w</code>
-已经在 EXE2 阶段需要 store
-数据（<code>src2</code>）。但原始设计中，store 数据的转发通路没有覆盖
-MEM 阶段 load 返回的数据——也就是说，D-Cache 返回的 load
-数据没有被正确地转发给后一条 store 指令的写数据通路。</p>
-<p><strong>修复</strong>：追踪
-<code>dram_wdata</code>/<code>wdata</code>/<code>rkd</code>/<code>src2</code>/<code>store</code>
-信号链路，在
-<code>core_top.v</code>、<code>ID_stage.v</code>、<code>ExE_reg.v</code>
-中修补了 store 数据的转发路径，确保 MEM 阶段返回的 load
-数据能被同一周期内需要 store 数据的指令使用。</p>
-<h4 id="冒险检测的冗余设计">2.5 冒险检测的冗余设计</h4>
-<p>值得注意的是，本设计的冒险停顿信号在
-<code>if_ready_go</code>、<code>id_ready_go</code>、<code>wb_ready_go</code>
-和 <code>pipline_is_not_stalled</code>
-四处进行了<strong>冗余检测</strong>：</p>
+
+<p>当 <code>ld.w</code> 的数据在 MEM 阶段返回时，<code>st.w</code> 已经在 EXE2 阶段需要 store 数据（<code>src2</code>）。但原始设计中，store 数据的转发通路没有覆盖 MEM 阶段 load 返回的数据——也就是说，D-Cache 返回的 load 数据没有被正确地转发给后一条 store 指令的写数据通路。</p>
+<p><strong>修复</strong>：追踪 <code>dram_wdata</code>&#x2F;<code>wdata</code>&#x2F;<code>rkd</code>&#x2F;<code>src2</code>&#x2F;<code>store</code> 信号链路，在 <code>core_top.v</code>、<code>ID_stage.v</code>、<code>ExE_reg.v</code> 中修补了 store 数据的转发路径，确保 MEM 阶段返回的 load 数据能被同一周期内需要 store 数据的指令使用。</p>
+<h4 id="2-5-冒险检测的冗余设计"><a href="#2-5-冒险检测的冗余设计" class="headerlink" title="2.5 冒险检测的冗余设计"></a>2.5 冒险检测的冗余设计</h4><p>值得注意的是，本设计的冒险停顿信号在 <code>if_ready_go</code>、<code>id_ready_go</code>、<code>wb_ready_go</code> 和 <code>pipline_is_not_stalled</code> 四处进行了<strong>冗余检测</strong>：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 四处独立但相同的冒险检测逻辑</span></span><br><span class="line"><span class="comment">// 1. if_ready_go  — 控制 IF→ID 推进</span></span><br><span class="line"><span class="comment">// 2. id_ready_go  — 控制 ID→EXE1 推进</span></span><br><span class="line"><span class="comment">// 3. wb_ready_go  — 控制 WB 阶段（与 inst_sram_data_ok 关联）</span></span><br><span class="line"><span class="comment">// 4. pipline_is_not_stalled — 全局停顿信号</span></span><br></pre></td></tr></table></figure>
+
 <p>这种冗余设计虽然增加了代码维护成本，但确保了在任何一级的停顿信号传播延迟下，冒险不会被遗漏。代价是可能引入不必要的额外停顿周期。</p>
 </div><nav class="pagination"><a id="left-navigator" href="/2026/07/04/LoongArch32-CPU-Architecture-Overview/">LoongArch32 CPU 架构设计总结</a><a id="right-navigator" href="/2026/04/07/BNRV-4/">BNRV(4)</a></nav></div><nav id="footer"><ul id="footer-links"><li><a href="/about">About</a></li><li><a href="/archives">Archives</a></li><li><a href="/atom.xml">RSS</a></li><li><a target="_blank" rel="noopener" href="https://icylogic.net" class="out-site">Theme.Carbon</a></li><li><a target="_blank" rel="noopener" href="https://github.com/hexojs/hexo" class="out-site">Hexo</a></li></ul></nav></div></body></html>

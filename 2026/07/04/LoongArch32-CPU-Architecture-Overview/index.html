@@ -1,70 +1,49 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="author" content="Tian"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>LoongArch32 CPU 架构设计总结</title><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/normalize/3.0.3/normalize.min.css"><link rel="stylesheet" type="text/css" href="/css/carbon.css"><script defer="defer" src="//cdn.jsdelivr.net/jquery/2.1.4/jquery.min.js"></script><script defer="defer" src="//cdn.jsdelivr.net/jquery.pjax/1.9.5/jquery.pjax.min.js"></script><link rel="stylesheet" href="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.css" type="text/css" media="screen"><script defer="defer" type="text/javascript" src="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.pack.js"></script><script>var performFancybox = true;</script><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/katex/0.5.0/katex.min.css"><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/katex.min.js"></script><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/contrib/auto-render.min.js"></script><script>var doRenderMath = 'katex';</script><script defer="defer" src="/js/carbon.js"></script><meta name="generator" content="Hexo 8.1.1"></head><body><div id="container"><div id="banner"><h1 id="site-title"><a href="/">Tian`s Blog</a></h1><p id="site-subtitle"></p></div><div id="content"><div class="meta"><h2 class="article-title"><a href="/2026/07/04/LoongArch32-CPU-Architecture-Overview">LoongArch32 CPU 架构设计总结</a></h2><div class="article-date"><a href="javascript:void(0);" class="extra-switch">2026-07-04</a></div></div><div class="extra"><span class="Tags">Tags: <a href="/tags/CPU%E8%AE%BE%E8%AE%A1/">CPU设计</a>, <a href="/tags/LoongArch/">LoongArch</a>, <a href="/tags/Verilog/">Verilog</a>, <a href="/tags/%E8%AE%A1%E7%AE%97%E6%9C%BA%E4%BD%93%E7%B3%BB%E7%BB%93%E6%9E%84/">计算机体系结构</a>, <a href="/tags/%E9%BE%99%E8%8A%AF%E6%9D%AF/">龙芯杯</a>.</span></div><div class="extra"><span class="Categories">Categories: <a href="/categories/%E7%A1%AC%E4%BB%B6%E8%AE%BE%E8%AE%A1/">硬件设计</a>.</span></div><div class="article-content"><div class="gallery"></div><h2 id="前言">前言</h2>
-<p>本文是对一个自行设计的 LoongArch32 (LA32) 指令集 CPU 的架构总结。该
-CPU 用于龙芯杯（NSCSCC）竞赛，在 Verilator 仿真环境下主频达到
-75MHz，已通过全部 58 个功能测试点。与上一篇文章聚焦于 I-Cache 一致性和
-RAW 冒险的调试不同，本文从架构设计的角度，用 STAR 框架系统性地梳理整个
-CPU 的设计决策、模块划分和技术选型。</p>
-<hr />
-<h2 id="situation背景">Situation（背景）</h2>
-<h3 id="项目目标">项目目标</h3>
-<p>设计一个完整支持 LoongArch32 精简指令集的流水线 CPU，要求：</p>
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="author" content="Tian"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>LoongArch32 CPU 架构设计总结</title><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/normalize/3.0.3/normalize.min.css"><link rel="stylesheet" type="text/css" href="/css/carbon.css"><script defer="defer" src="//cdn.jsdelivr.net/jquery/2.1.4/jquery.min.js"></script><script defer="defer" src="//cdn.jsdelivr.net/jquery.pjax/1.9.5/jquery.pjax.min.js"></script><link rel="stylesheet" href="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.css" type="text/css" media="screen"><script defer="defer" type="text/javascript" src="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.pack.js"></script><script>var performFancybox = true;</script><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/katex/0.5.0/katex.min.css"><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/katex.min.js"></script><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/contrib/auto-render.min.js"></script><script>var doRenderMath = 'katex';</script><script defer="defer" src="/js/carbon.js"></script><meta name="generator" content="Hexo 8.1.1"></head><body><div id="container"><div id="banner"><h1 id="site-title"><a href="/">Tian`s Blog</a></h1><p id="site-subtitle"></p></div><div id="content"><div class="meta"><h2 class="article-title"><a href="/2026/07/04/LoongArch32-CPU-Architecture-Overview">LoongArch32 CPU 架构设计总结</a></h2><div class="article-date"><a href="javascript:void(0);" class="extra-switch">2026-07-04</a></div></div><div class="extra"><span class="Tags">Tags: <a href="/tags/CPU%E8%AE%BE%E8%AE%A1/">CPU设计</a>, <a href="/tags/LoongArch/">LoongArch</a>, <a href="/tags/Verilog/">Verilog</a>, <a href="/tags/%E8%AE%A1%E7%AE%97%E6%9C%BA%E4%BD%93%E7%B3%BB%E7%BB%93%E6%9E%84/">计算机体系结构</a>, <a href="/tags/%E9%BE%99%E8%8A%AF%E6%9D%AF/">龙芯杯</a>.</span></div><div class="extra"><span class="Categories">Categories: <a href="/categories/%E7%A1%AC%E4%BB%B6%E8%AE%BE%E8%AE%A1/">硬件设计</a>.</span></div><div class="article-content"><div class="gallery"></div><h2 id="前言"><a href="#前言" class="headerlink" title="前言"></a>前言</h2><p>本文是对一个自行设计的 LoongArch32 (LA32) 指令集 CPU 的架构总结。该 CPU 用于龙芯杯（NSCSCC）竞赛，在 Verilator 仿真环境下主频达到 75MHz，已通过全部 58 个功能测试点。与上一篇文章聚焦于 I-Cache 一致性和 RAW 冒险的调试不同，本文从架构设计的角度，用 STAR 框架系统性地梳理整个 CPU 的设计决策、模块划分和技术选型。</p>
+<hr>
+<h2 id="Situation（背景）"><a href="#Situation（背景）" class="headerlink" title="Situation（背景）"></a>Situation（背景）</h2><h3 id="项目目标"><a href="#项目目标" class="headerlink" title="项目目标"></a>项目目标</h3><p>设计一个完整支持 LoongArch32 精简指令集的流水线 CPU，要求：</p>
 <ul>
-<li>支持 LA32R
-全部指令（算术逻辑、访存、分支、特权、CSR、TLB、原子等）</li>
+<li>支持 LA32R 全部指令（算术逻辑、访存、分支、特权、CSR、TLB、原子等）</li>
 <li>支持虚拟内存（页表映射、TLB 管理）</li>
-<li>支持 Cache（I-Cache / D-Cache，含 cacop 维护指令）</li>
+<li>支持 Cache（I-Cache &#x2F; D-Cache，含 cacop 维护指令）</li>
 <li>支持异常和中断处理（11 种异常 + 外部中断）</li>
 <li>通过 Chiplab 仿真环境的 NEMU difftest 验证</li>
 <li>在 Verilator 仿真下达到 75MHz 主频</li>
 </ul>
-<h3 id="loongarch32-指令集特点">LoongArch32 指令集特点</h3>
-<p>LoongArch32 是龙芯自主设计的 RISC 指令集，主要特点：</p>
+<h3 id="LoongArch32-指令集特点"><a href="#LoongArch32-指令集特点" class="headerlink" title="LoongArch32 指令集特点"></a>LoongArch32 指令集特点</h3><p>LoongArch32 是龙芯自主设计的 RISC 指令集，主要特点：</p>
 <ul>
 <li>32 个通用寄存器（$r0 恒为 0）</li>
 <li>定长 32-bit 指令编码</li>
-<li>延迟槽分支（B/BL 后有一条延迟槽指令）</li>
-<li>特权等级：PLV0（内核态）/ PLV3（用户态）</li>
-<li>软件管理 TLB（TLBSRCH / TLBRD / TLBWR / TLBFILL / INVTLB）</li>
-<li>直接映射窗口（DMW0/DMW1）支持无页表直访</li>
-<li>CSR 寄存器通过 csrrd / csrwr / csrxchg 访问</li>
+<li>延迟槽分支（B&#x2F;BL 后有一条延迟槽指令）</li>
+<li>特权等级：PLV0（内核态）&#x2F; PLV3（用户态）</li>
+<li>软件管理 TLB（TLBSRCH &#x2F; TLBRD &#x2F; TLBWR &#x2F; TLBFILL &#x2F; INVTLB）</li>
+<li>直接映射窗口（DMW0&#x2F;DMW1）支持无页表直访</li>
+<li>CSR 寄存器通过 csrrd &#x2F; csrwr &#x2F; csrxchg 访问</li>
 </ul>
-<hr />
-<h2 id="task任务">Task（任务）</h2>
-<p>将上述需求映射为一个可综合的 Verilog 设计，核心设计任务包括：</p>
-<ol type="1">
+<hr>
+<h2 id="Task（任务）"><a href="#Task（任务）" class="headerlink" title="Task（任务）"></a>Task（任务）</h2><p>将上述需求映射为一个可综合的 Verilog 设计，核心设计任务包括：</p>
+<ol>
 <li><strong>流水线划分</strong>：确定流水线级数和各级职责</li>
 <li><strong>取指子系统</strong>：I-Cache 设计、PC 管理、分支预测</li>
 <li><strong>译码与执行</strong>：指令译码、ALU 设计、乘除法实现</li>
-<li><strong>访存子系统</strong>：D-Cache 设计、Load/Store 对齐处理</li>
-<li><strong>特权架构</strong>：CSR 寄存器、TLB、异常/中断处理</li>
+<li><strong>访存子系统</strong>：D-Cache 设计、Load&#x2F;Store 对齐处理</li>
+<li><strong>特权架构</strong>：CSR 寄存器、TLB、异常&#x2F;中断处理</li>
 <li><strong>总线接口</strong>：AXI4 桥接器设计</li>
 <li><strong>冒险处理</strong>：数据转发与流水线停顿</li>
 </ol>
-<hr />
-<h2 id="action行动">Action（行动）</h2>
-<h3 id="一流水线架构">一、流水线架构</h3>
-<h4 id="六级流水线划分">1.1 六级流水线划分</h4>
-<p>本设计采用 6 级流水线，与经典的 5
-级（IF→ID→EX→MEM→WB）相比，将执行阶段拆分为 EXE1 和 EXE2 两级：</p>
+<hr>
+<h2 id="Action（行动）"><a href="#Action（行动）" class="headerlink" title="Action（行动）"></a>Action（行动）</h2><h3 id="一、流水线架构"><a href="#一、流水线架构" class="headerlink" title="一、流水线架构"></a>一、流水线架构</h3><h4 id="1-1-六级流水线划分"><a href="#1-1-六级流水线划分" class="headerlink" title="1.1 六级流水线划分"></a>1.1 六级流水线划分</h4><p>本设计采用 6 级流水线，与经典的 5 级（IF→ID→EX→MEM→WB）相比，将执行阶段拆分为 EXE1 和 EXE2 两级：</p>
 <figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">┌──────┐    ┌──────┐    ┌───────┐    ┌───────┐    ┌──────┐    ┌──────┐</span><br><span class="line">│  IF  │───▶│  ID  │───▶│ EXE1  │───▶│ EXE2  │───▶│ MEM  │───▶│  WB  │</span><br><span class="line">│取指  │    │译码  │    │ALU计算│    │访存地址│    │数据访存│   │写回   │</span><br><span class="line">│I-Cache│   │分支判定│   │乘除启动│   │D-Cache│    │结果选择│   │RegFile│</span><br><span class="line">│TLB查 │    │冒险检测│   │CSR读  │    │TLB查  │    │异常聚合│   │CSR写  │</span><br><span class="line">└──────┘    └──────┘    └───────┘    └───────┘    └──────┘    └──────┘</span><br><span class="line">     ↑                                                        ↓</span><br><span class="line">     └────────────────── PC 重定向（异常/分支/ertn）─────────────┘</span><br></pre></td></tr></table></figure>
-<p><strong>设计决策：为什么拆分 EXE1/EXE2？</strong></p>
-<p>在 5 级流水线中，EXE 阶段需要在一个周期内完成 ALU 计算 + D-Cache
-地址翻译 + D-Cache 访问。这条组合逻辑路径较长：</p>
+
+<p><strong>设计决策：为什么拆分 EXE1&#x2F;EXE2？</strong></p>
+<p>在 5 级流水线中，EXE 阶段需要在一个周期内完成 ALU 计算 + D-Cache 地址翻译 + D-Cache 访问。这条组合逻辑路径较长：</p>
 <figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">ALU计算 → 物理地址生成(TLB查找) → D-Cache Tag比较 → 数据选择</span><br></pre></td></tr></table></figure>
-<p>在 75MHz 的目标频率下，这条路径的时序裕量不足。将 ALU 计算放在
-EXE1，将访存地址发射和 TLB 查找放在
-EXE2，有效缩短了关键路径。代价是增加了一级流水线延迟，加大了数据冒险窗口和分支惩罚。</p>
-<h4 id="流水线控制信号">1.2 流水线控制信号</h4>
-<p>每一级通过 <code>ready_go</code> 和 <code>allow_in</code>
-两个信号控制推进：</p>
+
+<p>在 75MHz 的目标频率下，这条路径的时序裕量不足。将 ALU 计算放在 EXE1，将访存地址发射和 TLB 查找放在 EXE2，有效缩短了关键路径。代价是增加了一级流水线延迟，加大了数据冒险窗口和分支惩罚。</p>
+<h4 id="1-2-流水线控制信号"><a href="#1-2-流水线控制信号" class="headerlink" title="1.2 流水线控制信号"></a>1.2 流水线控制信号</h4><p>每一级通过 <code>ready_go</code> 和 <code>allow_in</code> 两个信号控制推进：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 每级的推进条件</span></span><br><span class="line"><span class="keyword">assign</span> &#123;stage&#125;_allow_in = &#123;stage&#125;_ready_go &amp;&amp; &#123;next_stage&#125;_allow_in;</span><br><span class="line"><span class="keyword">assign</span> &#123;stage&#125;_ready_go = <span class="comment">/* 无冒险、无停顿条件 */</span>;</span><br></pre></td></tr></table></figure>
-<p>这种”握手”式控制使得每一级可以独立地暂停，而不影响后级的正常推进。全局停顿信号
-<code>pipline_is_not_stalled</code>
-作为取指请求的门控条件，确保在冒险停顿时不会发起新的取指。</p>
-<h3 id="二取指子系统">二、取指子系统</h3>
-<h4 id="pc-管理">2.1 PC 管理</h4>
-<p>PC
-寄存器（<code>pc_reg.v</code>）维护当前取指地址和下一地址，处理以下重定向源：</p>
+
+<p>这种”握手”式控制使得每一级可以独立地暂停，而不影响后级的正常推进。全局停顿信号 <code>pipline_is_not_stalled</code> 作为取指请求的门控条件，确保在冒险停顿时不会发起新的取指。</p>
+<h3 id="二、取指子系统"><a href="#二、取指子系统" class="headerlink" title="二、取指子系统"></a>二、取指子系统</h3><h4 id="2-1-PC-管理"><a href="#2-1-PC-管理" class="headerlink" title="2.1 PC 管理"></a>2.1 PC 管理</h4><p>PC 寄存器（<code>pc_reg.v</code>）维护当前取指地址和下一地址，处理以下重定向源：</p>
 <table>
 <thead>
 <tr>
@@ -73,8 +52,7 @@ EXE2，有效缩短了关键路径。代价是增加了一级流水线延迟，�
 <th>说明</th>
 </tr>
 </thead>
-<tbody>
-<tr>
+<tbody><tr>
 <td>Reset</td>
 <td>最高</td>
 <td>初始化 PC 到 0x1bfffffc</td>
@@ -102,27 +80,20 @@ EXE2，有效缩短了关键路径。代价是增加了一级流水线延迟，�
 <tr>
 <td>顺序执行</td>
 <td>默认</td>
-<td>nextpc = pc + 4</td>
+<td>nextpc &#x3D; pc + 4</td>
 </tr>
-</tbody>
-</table>
-<p>BTB 命中时，PC
-在顺序推进的同时预取预测目标地址的指令，实现零延迟分支预测。</p>
-<h4 id="分支预测btb">2.2 分支预测：BTB</h4>
-<p>采用 16 项直接映射 BTB（<code>btb.v</code>），结构简单：</p>
+</tbody></table>
+<p>BTB 命中时，PC 在顺序推进的同时预取预测目标地址的指令，实现零延迟分支预测。</p>
+<h4 id="2-2-分支预测：BTB"><a href="#2-2-分支预测：BTB" class="headerlink" title="2.2 分支预测：BTB"></a>2.2 分支预测：BTB</h4><p>采用 16 项直接映射 BTB（<code>btb.v</code>），结构简单：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// BTB 表项结构</span></span><br><span class="line"><span class="comment">// &#123;valid(1), tag(28), target(32)&#125; = 60 bits</span></span><br><span class="line"><span class="comment">// 索引: pc[5:2]  标签: pc[31:6]</span></span><br><span class="line"></span><br><span class="line"><span class="comment">// 查找：组合逻辑，零延迟</span></span><br><span class="line"><span class="keyword">assign</span> hit    = entry_valid &amp;&amp; (entry_tag == lookup_pc[<span class="number">31</span>:<span class="number">6</span>]);</span><br><span class="line"><span class="keyword">assign</span> target = entry_target;</span><br><span class="line"></span><br><span class="line"><span class="comment">// 更新：WB 阶段写入实际跳转目标</span></span><br><span class="line"><span class="keyword">always</span> @(<span class="keyword">posedge</span> clk) <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (update)</span><br><span class="line">        entries[update_idx] &lt;= &#123;<span class="number">1&#x27;b1</span>, update_pc[<span class="number">31</span>:<span class="number">6</span>], update_target&#125;;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
 <p><strong>设计特点</strong>：</p>
 <ul>
-<li><strong>无预测器</strong>：BTB
-只记录目标地址，不预测是否跳转（taken/not-taken）。分支是否跳转由 ID
-阶段的 ALU 组合逻辑判定，延迟为 1 个周期。</li>
-<li><strong>直接映射</strong>：16 项，索引
-4-bit，冲突率较高但面积小。</li>
-<li><strong>延迟槽处理</strong>：LoongArch 的分支指令后有一条延迟槽，BTB
-预测的是跳转指令本身的目标，延迟槽指令正常执行。</li>
+<li><strong>无预测器</strong>：BTB 只记录目标地址，不预测是否跳转（taken&#x2F;not-taken）。分支是否跳转由 ID 阶段的 ALU 组合逻辑判定，延迟为 1 个周期。</li>
+<li><strong>直接映射</strong>：16 项，索引 4-bit，冲突率较高但面积小。</li>
+<li><strong>延迟槽处理</strong>：LoongArch 的分支指令后有一条延迟槽，BTB 预测的是跳转指令本身的目标，延迟槽指令正常执行。</li>
 </ul>
-<h4 id="i-cache-设计">2.3 I-Cache 设计</h4>
-<p>I-Cache 采用 2 路组相联设计（<code>icache_two_way.v</code>）：</p>
+<h4 id="2-3-I-Cache-设计"><a href="#2-3-I-Cache-设计" class="headerlink" title="2.3 I-Cache 设计"></a>2.3 I-Cache 设计</h4><p>I-Cache 采用 2 路组相联设计（<code>icache_two_way.v</code>）：</p>
 <table>
 <thead>
 <tr>
@@ -130,8 +101,7 @@ EXE2，有效缩短了关键路径。代价是增加了一级流水线延迟，�
 <th>值</th>
 </tr>
 </thead>
-<tbody>
-<tr>
+<tbody><tr>
 <td>相联度</td>
 <td>2 路</td>
 </tr>
@@ -155,32 +125,22 @@ EXE2，有效缩短了关键路径。代价是增加了一级流水线延迟，�
 <td>地址分解</td>
 <td>Tag[31:12] | Index[11:4] | Word[3:2] | Byte[1:0]</td>
 </tr>
-</tbody>
-</table>
+</tbody></table>
 <p>I-Cache 采用阻塞式（Blocking）状态机：</p>
 <figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">S_IDLE ──hit──▶ S_HIT_RESP ──▶ S_IDLE</span><br><span class="line">  │                                                    </span><br><span class="line">  └──miss──▶ S_REF_REQ ──▶ S_REF_WAIT ──┐</span><br><span class="line">                                            └─▶ S_REF_REQ (重复4次) ──▶ S_REF_RESP ──▶ S_IDLE</span><br></pre></td></tr></table></figure>
+
 <ul>
 <li><strong>命中路径</strong>：2 个周期（IDLE → HIT_RESP → IDLE）</li>
 <li><strong>缺失惩罚</strong>：10+ 周期（4 拍 Refill + AXI 延迟）</li>
-<li><strong>Cacop 支持</strong>：S_CACOP_RESP 状态处理 cacop 指令的
-Index Invalidate 和 Hit Invalidate 操作</li>
+<li><strong>Cacop 支持</strong>：S_CACOP_RESP 状态处理 cacop 指令的 Index Invalidate 和 Hit Invalidate 操作</li>
 </ul>
-<h3 id="三译码与执行">三、译码与执行</h3>
-<h4 id="指令译码">3.1 指令译码</h4>
-<p>译码器（<code>ID_stage.v</code>）采用两级译码结构：</p>
-<ol type="1">
-<li><strong>一级译码</strong>：使用 <code>decoder_6_64</code> 将
-opcode[31:26] 译码为 64 个 one-hot 信号</li>
-<li><strong>二级译码</strong>：根据子操作码字段（[25:22]、[21:20]、[19:15]
-等）进一步区分具体指令</li>
+<h3 id="三、译码与执行"><a href="#三、译码与执行" class="headerlink" title="三、译码与执行"></a>三、译码与执行</h3><h4 id="3-1-指令译码"><a href="#3-1-指令译码" class="headerlink" title="3.1 指令译码"></a>3.1 指令译码</h4><p>译码器（<code>ID_stage.v</code>）采用两级译码结构：</p>
+<ol>
+<li><strong>一级译码</strong>：使用 <code>decoder_6_64</code> 将 opcode[31:26] 译码为 64 个 one-hot 信号</li>
+<li><strong>二级译码</strong>：根据子操作码字段（[25:22]、[21:20]、[19:15] 等）进一步区分具体指令</li>
 </ol>
 <p>译码器输出以下控制信号：</p>
-<table style="width:100%;">
-<colgroup>
-<col style="width: 42%" />
-<col style="width: 28%" />
-<col style="width: 28%" />
-</colgroup>
+<table>
 <thead>
 <tr>
 <th>信号类别</th>
@@ -188,11 +148,10 @@ opcode[31:26] 译码为 64 个 one-hot 信号</li>
 <th>说明</th>
 </tr>
 </thead>
-<tbody>
-<tr>
+<tbody><tr>
 <td>寄存器读</td>
 <td><code>id_rj</code>, <code>id_rk</code>, <code>id_rd</code></td>
-<td>源/目标寄存器编号</td>
+<td>源&#x2F;目标寄存器编号</td>
 </tr>
 <tr>
 <td>ALU控制</td>
@@ -201,15 +160,13 @@ opcode[31:26] 译码为 64 个 one-hot 信号</li>
 </tr>
 <tr>
 <td>立即数</td>
-<td><code>id_imm12</code>, <code>id_imm5</code>, <code>id_imm16</code>,
-<code>id_imm20</code>, <code>id_imm26</code></td>
+<td><code>id_imm12</code>, <code>id_imm5</code>, <code>id_imm16</code>, <code>id_imm20</code>, <code>id_imm26</code></td>
 <td>各类立即数</td>
 </tr>
 <tr>
 <td>访存控制</td>
-<td><code>id_dram_we</code>, <code>id_dram_re</code>,
-<code>id_rdram_num</code>, <code>id_wdram_num</code></td>
-<td>Load/Store 控制</td>
+<td><code>id_dram_we</code>, <code>id_dram_re</code>, <code>id_rdram_num</code>, <code>id_wdram_num</code></td>
+<td>Load&#x2F;Store 控制</td>
 </tr>
 <tr>
 <td>分支控制</td>
@@ -218,50 +175,38 @@ opcode[31:26] 译码为 64 个 one-hot 信号</li>
 </tr>
 <tr>
 <td>CSR控制</td>
-<td><code>id_csr_num</code>, <code>id_csr_we</code>,
-<code>id_csr_mask_all_one</code></td>
+<td><code>id_csr_num</code>, <code>id_csr_we</code>, <code>id_csr_mask_all_one</code></td>
 <td>CSR 读写</td>
 </tr>
 <tr>
 <td>TLB控制</td>
-<td><code>id_invtlb_valid</code>, <code>id_inst_tlbrd</code>,
-<code>id_tlb_we</code></td>
+<td><code>id_invtlb_valid</code>, <code>id_inst_tlbrd</code>, <code>id_tlb_we</code></td>
 <td>TLB 维护指令</td>
 </tr>
 <tr>
 <td>异常检测</td>
-<td><code>id_ex_adef</code>, <code>id_ex_ale_h</code>,
-<code>id_ex_ale_w</code>, <code>id_ex_ine</code>,
-<code>id_ex_brk</code></td>
-<td>取指/执行阶段异常</td>
+<td><code>id_ex_adef</code>, <code>id_ex_ale_h</code>, <code>id_ex_ale_w</code>, <code>id_ex_ine</code>, <code>id_ex_brk</code></td>
+<td>取指&#x2F;执行阶段异常</td>
 </tr>
-</tbody>
-</table>
-<h4 id="alu-设计">3.2 ALU 设计</h4>
-<p>ALU（<code>alu.v</code>）支持 20 种操作，全部在 EXE1
-阶段组合逻辑完成：</p>
+</tbody></table>
+<h4 id="3-2-ALU-设计"><a href="#3-2-ALU-设计" class="headerlink" title="3.2 ALU 设计"></a>3.2 ALU 设计</h4><p>ALU（<code>alu.v</code>）支持 20 种操作，全部在 EXE1 阶段组合逻辑完成：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">case</span> (alu_op)</span><br><span class="line">    <span class="number">5&#x27;d0</span>:  result = src1 + src2;          <span class="comment">// ADD.W</span></span><br><span class="line">    <span class="number">5&#x27;d1</span>:  result = src1 - src2;          <span class="comment">// SUB.W</span></span><br><span class="line">    <span class="number">5&#x27;d2</span>:  result = (<span class="built_in">$signed</span>(src1) &lt; <span class="built_in">$signed</span>(src2)) ? <span class="number">1</span> : <span class="number">0</span>;  <span class="comment">// SLT</span></span><br><span class="line">    <span class="number">5&#x27;d3</span>:  result = (src1 &lt; src2) ? <span class="number">1</span> : <span class="number">0</span>;                     <span class="comment">// SLTU</span></span><br><span class="line">    <span class="number">5&#x27;d4</span>:  result = src1 &amp; src2;          <span class="comment">// AND</span></span><br><span class="line">    <span class="number">5&#x27;d5</span>:  result = src1 | src2;          <span class="comment">// OR</span></span><br><span class="line">    <span class="number">5&#x27;d6</span>:  result = ~(src1 | src2);       <span class="comment">// NOR</span></span><br><span class="line">    <span class="number">5&#x27;d7</span>:  result = src1 ^ src2;          <span class="comment">// XOR</span></span><br><span class="line">    <span class="number">5&#x27;d8</span>:  result = src1 &lt;&lt; src2[<span class="number">4</span>:<span class="number">0</span>];    <span class="comment">// SLL.W</span></span><br><span class="line">    <span class="number">5&#x27;d9</span>:  result = src1 &gt;&gt; src2[<span class="number">4</span>:<span class="number">0</span>];    <span class="comment">// SRL.W</span></span><br><span class="line">    <span class="number">5&#x27;d10</span>: result = <span class="built_in">$signed</span>(src1) &gt;&gt;&gt; src2[<span class="number">4</span>:<span class="number">0</span>];  <span class="comment">// SRA.W</span></span><br><span class="line">    <span class="number">5&#x27;d11</span>: <span class="comment">/* BEQ: 条件跳转 */</span></span><br><span class="line">    <span class="number">5&#x27;d12</span>: <span class="comment">/* BNE: 条件跳转 */</span></span><br><span class="line">    <span class="number">5&#x27;d13</span>: <span class="comment">/* B: 无条件跳转，结果 = PC+4 */</span></span><br><span class="line">    <span class="number">5&#x27;d14</span>: <span class="comment">/* JIRL: 寄存器跳转，结果 = PC+4 */</span></span><br><span class="line">    <span class="number">5&#x27;d15</span>: result = &#123;src2[<span class="number">19</span>:<span class="number">0</span>], <span class="number">12&#x27;b0</span>&#125;;           <span class="comment">// LU12I.W</span></span><br><span class="line">    <span class="number">5&#x27;d16</span>: result = &#123;src2[<span class="number">19</span>:<span class="number">0</span>], <span class="number">12&#x27;b0</span>&#125; + exe_pc;  <span class="comment">// PCADDI</span></span><br><span class="line">    <span class="number">5&#x27;d17</span>: result = mul_signed[<span class="number">31</span>:<span class="number">0</span>];    <span class="comment">// MUL.W (低32位)</span></span><br><span class="line">    <span class="number">5&#x27;d18</span>: result = mul_signed[<span class="number">63</span>:<span class="number">32</span>];   <span class="comment">// MULH.W.S (高32位有符号)</span></span><br><span class="line">    <span class="number">5&#x27;d19</span>: result = mul_unsigned[<span class="number">63</span>:<span class="number">32</span>]; <span class="comment">// MULH.W.U (高32位无符号)</span></span><br><span class="line"><span class="keyword">endcase</span></span><br></pre></td></tr></table></figure>
-<p><strong>乘法器</strong>：使用 Verilog
-<code>$signed * $signed</code>，综合时映射到 DSP 硬块，单周期完成。</p>
-<p><strong>地址对齐异常检测</strong>：ALU
-同时检测访存地址的对齐错误：</p>
+
+<p><strong>乘法器</strong>：使用 Verilog <code>$signed * $signed</code>，综合时映射到 DSP 硬块，单周期完成。</p>
+<p><strong>地址对齐异常检测</strong>：ALU 同时检测访存地址的对齐错误：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 半字访存地址最低位不为0 → ALE异常</span></span><br><span class="line"><span class="keyword">if</span> (exe_ex_ale_h &amp;&amp; (exe_alu_result[<span class="number">0</span>] != <span class="number">1&#x27;b0</span>))</span><br><span class="line">    exe_ex_ale = <span class="number">1&#x27;b1</span>;</span><br><span class="line"><span class="comment">// 字访存地址低2位不为0 → ALE异常</span></span><br><span class="line"><span class="keyword">else</span> <span class="keyword">if</span> (exe_ex_ale_w &amp;&amp; (exe_alu_result[<span class="number">1</span>:<span class="number">0</span>] != <span class="number">2&#x27;b00</span>))</span><br><span class="line">    exe_ex_ale = <span class="number">1&#x27;b1</span>;</span><br></pre></td></tr></table></figure>
-<h4 id="除法器设计">3.3 除法器设计</h4>
-<p>除法器（<code>div.v</code>）采用迭代恢复余数法，32
-周期完成一次除法：</p>
+
+<h4 id="3-3-除法器设计"><a href="#3-3-除法器设计" class="headerlink" title="3.3 除法器设计"></a>3.3 除法器设计</h4><p>除法器（<code>div.v</code>）采用迭代恢复余数法，32 周期完成一次除法：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 核心思想：将被除数逐位移入余数寄存器，试减除数</span></span><br><span class="line"><span class="keyword">always</span> @(<span class="keyword">posedge</span> div_clk) <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (~(count[<span class="number">7</span>])) <span class="keyword">begin</span>  <span class="comment">// count 从 32 递减到 0</span></span><br><span class="line">        <span class="keyword">if</span> (tmp_d[<span class="number">32</span>]) <span class="keyword">begin</span>    <span class="comment">// 试减结果为负，商位=0</span></span><br><span class="line">            UnsignS &lt;= &#123;UnsignS[<span class="number">31</span>:<span class="number">0</span>], <span class="number">1&#x27;b0</span>&#125;;</span><br><span class="line">            tmp_r &lt;= result_r;  <span class="comment">// 恢复余数</span></span><br><span class="line">        <span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">begin</span>          <span class="comment">// 试减结果非负，商位=1</span></span><br><span class="line">            UnsignS &lt;= &#123;UnsignS[<span class="number">31</span>:<span class="number">0</span>], <span class="number">1&#x27;b1</span>&#125;;</span><br><span class="line">            tmp_r &lt;= tmp_d;     <span class="comment">// 保留余数</span></span><br><span class="line">        <span class="keyword">end</span></span><br><span class="line">        count &lt;= count - <span class="number">8&#x27;d1</span>;</span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
 <p><strong>特点</strong>：</p>
 <ul>
-<li>支持
-<code>div.w</code>（有符号除）、<code>div.wu</code>（无符号除）、<code>mod.w</code>（取余）、<code>mod.wu</code>（无符号取余）</li>
+<li>支持 <code>div.w</code>（有符号除）、<code>div.wu</code>（无符号除）、<code>mod.w</code>（取余）、<code>mod.wu</code>（无符号取余）</li>
 <li>通过取绝对值实现有符号除法，最后根据符号位恢复结果</li>
 <li>除数为 0 时不产生异常（LoongArch 硬件不检测除零，由软件处理）</li>
 <li>除法期间流水线停顿，EXE1 阶段等待 <code>complete</code> 信号</li>
 </ul>
-<h3 id="四访存子系统">四、访存子系统</h3>
-<h4 id="d-cache-设计">4.1 D-Cache 设计</h4>
-<p>D-Cache（<code>dcache_two_way.v</code>）与 I-Cache
-结构对称，但增加了写回（Write-Back）支持：</p>
+<h3 id="四、访存子系统"><a href="#四、访存子系统" class="headerlink" title="四、访存子系统"></a>四、访存子系统</h3><h4 id="4-1-D-Cache-设计"><a href="#4-1-D-Cache-设计" class="headerlink" title="4.1 D-Cache 设计"></a>4.1 D-Cache 设计</h4><p>D-Cache（<code>dcache_two_way.v</code>）与 I-Cache 结构对称，但增加了写回（Write-Back）支持：</p>
 <table>
 <thead>
 <tr>
@@ -269,8 +214,7 @@ opcode[31:26] 译码为 64 个 one-hot 信号</li>
 <th>值</th>
 </tr>
 </thead>
-<tbody>
-<tr>
+<tbody><tr>
 <td>相联度</td>
 <td>2 路</td>
 </tr>
@@ -294,25 +238,14 @@ opcode[31:26] 译码为 64 个 one-hot 信号</li>
 <td>脏位</td>
 <td>每路每行 1-bit dirty</td>
 </tr>
-</tbody>
-</table>
-<p><strong>写回流程</strong>：当 Store 指令命中 D-Cache
-且目标行已脏时，需要先将脏行写回内存，再写入新数据。这通过状态机中的
-<code>S_WB_REQ</code> / <code>S_WB_WAIT</code> 状态完成。</p>
-<h4 id="loadstore-对齐处理">4.2 Load/Store 对齐处理</h4>
-<p>LoongArch 要求访存地址自然对齐（半字地址 2 对齐，字地址 4
-对齐）。非对齐访问触发 ALE 异常。对齐处理在 MEM 阶段完成：</p>
+</tbody></table>
+<p><strong>写回流程</strong>：当 Store 指令命中 D-Cache 且目标行已脏时，需要先将脏行写回内存，再写入新数据。这通过状态机中的 <code>S_WB_REQ</code> &#x2F; <code>S_WB_WAIT</code> 状态完成。</p>
+<h4 id="4-2-Load-Store-对齐处理"><a href="#4-2-Load-Store-对齐处理" class="headerlink" title="4.2 Load&#x2F;Store 对齐处理"></a>4.2 Load&#x2F;Store 对齐处理</h4><p>LoongArch 要求访存地址自然对齐（半字地址 2 对齐，字地址 4 对齐）。非对齐访问触发 ALE 异常。对齐处理在 MEM 阶段完成：</p>
 <ul>
-<li><strong>Load</strong>：根据
-<code>id_rdram_num</code>（ld.b/ld.h/ld.w）和地址低 2 位，从 32-bit
-D-Cache 数据中选择对应字节/半字，并进行零扩展或符号扩展</li>
-<li><strong>Store</strong>：根据 <code>id_wdram_num</code> 和地址低 2
-位，将数据放置到正确的字节通道（通过 <code>wstrb</code>
-字节使能掩码控制）</li>
+<li><strong>Load</strong>：根据 <code>id_rdram_num</code>（ld.b&#x2F;ld.h&#x2F;ld.w）和地址低 2 位，从 32-bit D-Cache 数据中选择对应字节&#x2F;半字，并进行零扩展或符号扩展</li>
+<li><strong>Store</strong>：根据 <code>id_wdram_num</code> 和地址低 2 位，将数据放置到正确的字节通道（通过 <code>wstrb</code> 字节使能掩码控制）</li>
 </ul>
-<h3 id="五特权架构">五、特权架构</h3>
-<h4 id="csr-寄存器">5.1 CSR 寄存器</h4>
-<p>CSR 模块（<code>csr.v</code>）实现了完整的 LA32 CSR 集合：</p>
+<h3 id="五、特权架构"><a href="#五、特权架构" class="headerlink" title="五、特权架构"></a>五、特权架构</h3><h4 id="5-1-CSR-寄存器"><a href="#5-1-CSR-寄存器" class="headerlink" title="5.1 CSR 寄存器"></a>5.1 CSR 寄存器</h4><p>CSR 模块（<code>csr.v</code>）实现了完整的 LA32 CSR 集合：</p>
 <table>
 <thead>
 <tr>
@@ -321,8 +254,7 @@ D-Cache 数据中选择对应字节/半字，并进行零扩展或符号扩展</
 <th>说明</th>
 </tr>
 </thead>
-<tbody>
-<tr>
+<tbody><tr>
 <td>CRMD</td>
 <td>0x0</td>
 <td>当前模式信息（PLV, IE, DA, PG, DATF, DATM）</td>
@@ -368,8 +300,8 @@ D-Cache 数据中选择对应字节/半字，并进行零扩展或符号扩展</
 <td>TLB 高位</td>
 </tr>
 <tr>
-<td>TLBELO0/1</td>
-<td>0x12/0x13</td>
+<td>TLBELO0&#x2F;1</td>
+<td>0x12&#x2F;0x13</td>
 <td>TLB 低位（奇偶页）</td>
 </tr>
 <tr>
@@ -383,8 +315,8 @@ D-Cache 数据中选择对应字节/半字，并进行零扩展或符号扩展</
 <td>TLB 重填异常入口</td>
 </tr>
 <tr>
-<td>DMW0/1</td>
-<td>0x180/0x181</td>
+<td>DMW0&#x2F;1</td>
+<td>0x180&#x2F;0x181</td>
 <td>直接映射窗口</td>
 </tr>
 <tr>
@@ -402,23 +334,18 @@ D-Cache 数据中选择对应字节/半字，并进行零扩展或符号扩展</
 <td>0x41</td>
 <td>定时器配置</td>
 </tr>
-</tbody>
-</table>
-<p><strong>CSR 写机制</strong>：采用掩码写入方式，支持 csrxchg
-指令的原子读-改-写：</p>
+</tbody></table>
+<p><strong>CSR 写机制</strong>：采用掩码写入方式，支持 csrxchg 指令的原子读-改-写：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 通用 CSR 写模式：mask + value</span></span><br><span class="line">csr_field &lt;= csr_wmask[field] &amp; csr_wvalue[field] |</span><br><span class="line">             ~csr_wmask[field] &amp; csr_field;</span><br></pre></td></tr></table></figure>
+
 <p><strong>异常时的 CSR 自动更新</strong>：</p>
 <ul>
-<li><code>wb_ex</code> 触发时：PRMD.PPLV ← CRMD.PLV，PRMD.PIE ←
-CRMD.IE，CRMD.PLV ← 0，CRMD.IE ← 0，ERA ← WB.PC，ESTAT.ECode ←
-异常码</li>
-<li><code>wb_ertn</code> 触发时：CRMD.PLV ← PRMD.PPLV，CRMD.IE ←
-PRMD.PIE</li>
+<li><code>wb_ex</code> 触发时：PRMD.PPLV ← CRMD.PLV，PRMD.PIE ← CRMD.IE，CRMD.PLV ← 0，CRMD.IE ← 0，ERA ← WB.PC，ESTAT.ECode ← 异常码</li>
+<li><code>wb_ertn</code> 触发时：CRMD.PLV ← PRMD.PPLV，CRMD.IE ← PRMD.PIE</li>
 </ul>
-<h4 id="tlb-设计">5.2 TLB 设计</h4>
-<p>TLB（<code>tlb.v</code>）实现 16 项全相联查找，支持 4KB 和 4MB
-两种页大小：</p>
+<h4 id="5-2-TLB-设计"><a href="#5-2-TLB-设计" class="headerlink" title="5.2 TLB 设计"></a>5.2 TLB 设计</h4><p>TLB（<code>tlb.v</code>）实现 16 项全相联查找，支持 4KB 和 4MB 两种页大小：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 三端口并行查找</span></span><br><span class="line"><span class="comment">// Port 0: 取指地址翻译（IF阶段）</span></span><br><span class="line"><span class="comment">// Port 1: 数据地址翻译（EXE2/MEM阶段）</span></span><br><span class="line"><span class="comment">// Port 2: TLBSRCH 指令查找</span></span><br><span class="line"></span><br><span class="line"><span class="comment">// 匹配条件：VPPN匹配 + (ASID匹配 || 全局标志G) + 有效标志E</span></span><br><span class="line"><span class="keyword">assign</span> match0[i] = (s0_vppn[<span class="number">18</span>:<span class="number">9</span>] == tlb_vppn[i][<span class="number">18</span>:<span class="number">9</span>]) &amp;&amp;</span><br><span class="line">                   (tlb_ps4MB[i] || s0_vppn[<span class="number">8</span>:<span class="number">0</span>] == tlb_vppn[i][<span class="number">8</span>:<span class="number">0</span>]) &amp;&amp;</span><br><span class="line">                   ((s0_asid == tlb_asid[i]) || tlb_g[i]) &amp;&amp;</span><br><span class="line">                   tlb_e[i];</span><br></pre></td></tr></table></figure>
+
 <p><strong>TLB 维护指令支持</strong>：</p>
 <table>
 <thead>
@@ -427,14 +354,13 @@ PRMD.PIE</li>
 <th>功能</th>
 </tr>
 </thead>
-<tbody>
-<tr>
+<tbody><tr>
 <td>TLBSRCH</td>
 <td>查找 TLB 中是否存在指定虚页映射，结果写入 TLBIDX.NE</td>
 </tr>
 <tr>
 <td>TLBRD</td>
-<td>读取 TLBIDX.Index 指向的表项到 TLBEHI/TLBELO0/1</td>
+<td>读取 TLBIDX.Index 指向的表项到 TLBEHI&#x2F;TLBELO0&#x2F;1</td>
 </tr>
 <tr>
 <td>TLBWR</td>
@@ -448,87 +374,57 @@ PRMD.PIE</li>
 <td>INVTLB</td>
 <td>按 op 码无效化 TLB 表项（6 种模式：全清、按ASID、按VPPN等）</td>
 </tr>
-</tbody>
-</table>
-<h4 id="异常与中断处理">5.3 异常与中断处理</h4>
-<p>异常处理采用 <strong>WB 阶段统一检测</strong>
-策略（<code>trap_unit.v</code> + <code>wb_stage.v</code>）：</p>
+</tbody></table>
+<h4 id="5-3-异常与中断处理"><a href="#5-3-异常与中断处理" class="headerlink" title="5.3 异常与中断处理"></a>5.3 异常与中断处理</h4><p>异常处理采用 <strong>WB 阶段统一检测</strong> 策略（<code>trap_unit.v</code> + <code>wb_stage.v</code>）：</p>
 <figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">异常检测点         传递路径              最终判定</span><br><span class="line">───────────────    ─────────────────    ──────────</span><br><span class="line">IF: ADEF(取指地址错误) ──→ 流水线传递 ──→ WB阶段</span><br><span class="line">ID: INE(非法指令)     ──→ 流水线传递 ──→ WB阶段</span><br><span class="line">ID: BRK(断点)         ──→ 流水线传递 ──→ WB阶段</span><br><span class="line">ID: SYS(系统调用)     ──→ 流水线传递 ──→ WB阶段</span><br><span class="line">EXE: ALE(地址对齐)    ──→ 流水线传递 ──→ WB阶段</span><br><span class="line">MEM: TLB异常          ──→ 流水线传递 ──→ WB阶段</span><br><span class="line">外部: 中断            ──→ 直接注入    ──→ WB阶段</span><br></pre></td></tr></table></figure>
+
 <p><strong>异常优先级</strong>（从高到低）：</p>
 <figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">中断(INT) &gt; TLB重填(TLBR) &gt; 页修改(PME) &gt; TLB无效(PIL/PIS/PIF)</span><br><span class="line">&gt; 权限(PPI) &gt; 取指地址错误(ADEF) &gt; 访存对齐(ALE) &gt; 系统调用(SYS)</span><br><span class="line">&gt; 断点(BRK) &gt; 非法指令(INE)</span><br></pre></td></tr></table></figure>
+
 <p><strong>中断处理</strong>（<code>interrupt.v</code>）：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 中断使能：CRMD.IE &amp;&amp; (ESTAT.IS &amp; ECFG.LIE) != 0</span></span><br><span class="line"><span class="keyword">wire</span> [<span class="number">12</span>:<span class="number">0</span>] int_masked = csr_estat_is &amp; csr_ecfg_lie;</span><br><span class="line"><span class="keyword">wire</span>        has_int = csr_crmd_ie &amp;&amp; (|int_masked || |ext_intrpt);</span><br></pre></td></tr></table></figure>
-<p>支持 13 个中断源：2 个软件中断（IS[1:0]）、8
-个硬件中断（IS[9:2]）、定时器中断（IS[11]）、核间中断（IS[12]）。</p>
-<p><strong>定时器</strong>：64 位自由运行计数器
-<code>csr_timer_64</code>，配合 32 位倒计时器 <code>timer_cnt</code> 和
-TCFG 配置寄存器，支持单次和周期定时中断。</p>
-<h3 id="六总线接口">六、总线接口</h3>
-<h4 id="axi4-桥接器">6.1 AXI4 桥接器</h4>
-<p>AXI 桥接器（<code>sram_axi_bridge.v</code>）将 CPU 的 SRAM-like
-接口转换为 AXI4 总线协议，取指和数据共享同一组 AXI 通道：</p>
+
+<p>支持 13 个中断源：2 个软件中断（IS[1:0]）、8 个硬件中断（IS[9:2]）、定时器中断（IS[11]）、核间中断（IS[12]）。</p>
+<p><strong>定时器</strong>：64 位自由运行计数器 <code>csr_timer_64</code>，配合 32 位倒计时器 <code>timer_cnt</code> 和 TCFG 配置寄存器，支持单次和周期定时中断。</p>
+<h3 id="六、总线接口"><a href="#六、总线接口" class="headerlink" title="六、总线接口"></a>六、总线接口</h3><h4 id="6-1-AXI4-桥接器"><a href="#6-1-AXI4-桥接器" class="headerlink" title="6.1 AXI4 桥接器"></a>6.1 AXI4 桥接器</h4><p>AXI 桥接器（<code>sram_axi_bridge.v</code>）将 CPU 的 SRAM-like 接口转换为 AXI4 总线协议，取指和数据共享同一组 AXI 通道：</p>
 <figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">CPU侧                    AXI Bridge                    AXI总线</span><br><span class="line">────────                 ────────────                  ────────</span><br><span class="line">inst_sram_req ──┐                              ┌── AR channel (ID=0)</span><br><span class="line">data_sram_req ──┤── 读写仲裁 ──▶ AXI状态机 ──┤── R channel</span><br><span class="line">                                 │            ├── AW channel (ID=1)</span><br><span class="line">                                 │            ├── W channel</span><br><span class="line">                                 │            └── B channel</span><br><span class="line">inst_sram_rdata ◀── 响应分发 ◀──┘</span><br><span class="line">data_sram_rdata ◀── 响应分发 ◀──┘</span><br></pre></td></tr></table></figure>
-<p><strong>读通道仲裁</strong>：取指和数据读请求通过
-<code>read_req_is_data</code>
-信号仲裁，数据请求优先。请求被接受后锁定（<code>read_hold_*</code>
-寄存器），直到响应返回。</p>
-<p><strong>读响应缓冲</strong>：AXI
-读响应通过一级寄存器缓冲（<code>r_buf_rvalid</code>/<code>r_buf_rid</code>/<code>r_buf_rdata</code>），过滤潜在的毛刺，并按
-ID 分发到正确的端口：</p>
+
+<p><strong>读通道仲裁</strong>：取指和数据读请求通过 <code>read_req_is_data</code> 信号仲裁，数据请求优先。请求被接受后锁定（<code>read_hold_*</code> 寄存器），直到响应返回。</p>
+<p><strong>读响应缓冲</strong>：AXI 读响应通过一级寄存器缓冲（<code>r_buf_rvalid</code>&#x2F;<code>r_buf_rid</code>&#x2F;<code>r_buf_rdata</code>），过滤潜在的毛刺，并按 ID 分发到正确的端口：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> inst_sram_data_ok = r_buf_rvalid &amp;&amp; r_buf_rid == <span class="number">4&#x27;b0</span>;  <span class="comment">// ID=0: 取指</span></span><br><span class="line"><span class="keyword">assign</span> data_sram_data_ok = r_buf_rvalid &amp;&amp; r_buf_rid == <span class="number">4&#x27;b1</span>;  <span class="comment">// ID=1: 数据</span></span><br></pre></td></tr></table></figure>
-<p><strong>写通道</strong>：AW 和 W
-通道独立握手，支持地址和数据先后到达的灵活时序。写响应（B
-通道）用于确认写完成。</p>
-<h3 id="七冒险处理">七、冒险处理</h3>
-<h4 id="数据冒险">7.1 数据冒险</h4>
-<p>采用 <strong>ID 阶段集中转发</strong> 策略，从 EXE1、EXE2、MEM、WB
-四个后级阶段转发：</p>
+
+<p><strong>写通道</strong>：AW 和 W 通道独立握手，支持地址和数据先后到达的灵活时序。写响应（B 通道）用于确认写完成。</p>
+<h3 id="七、冒险处理"><a href="#七、冒险处理" class="headerlink" title="七、冒险处理"></a>七、冒险处理</h3><h4 id="7-1-数据冒险"><a href="#7-1-数据冒险" class="headerlink" title="7.1 数据冒险"></a>7.1 数据冒险</h4><p>采用 <strong>ID 阶段集中转发</strong> 策略，从 EXE1、EXE2、MEM、WB 四个后级阶段转发：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 优先级：EXE1 &gt; EXE2 &gt; MEM &gt; WB（越近越新）</span></span><br><span class="line"><span class="keyword">assign</span> id_src1_fwd = (exe1_ref_we &amp;&amp; exe1_rd == rf_raddr1 &amp;&amp; rf_raddr1 != <span class="number">0</span>) ? exe1_alu_result :</span><br><span class="line">                     (exe2_ref_we &amp;&amp; exe2_rd == rf_raddr1 &amp;&amp; rf_raddr1 != <span class="number">0</span>) ? exe2_alu_result :</span><br><span class="line">                     (mem_ref_we  &amp;&amp; mem_rd  == rf_raddr1 &amp;&amp; rf_raddr1 != <span class="number">0</span>) ? mem_alu_result  :</span><br><span class="line">                     (wb_rf_we    &amp;&amp; wb_rd   == rf_raddr1 &amp;&amp; rf_raddr1 != <span class="number">0</span>) ? rf_wdata        :</span><br><span class="line">                     rf_rdata1;</span><br></pre></td></tr></table></figure>
-<p><strong>Load-Use 停顿</strong>：当 MEM 阶段有 Load 指令且 ID
-阶段的消费者依赖其结果时，停顿 IF 和 ID：</p>
+
+<p><strong>Load-Use 停顿</strong>：当 MEM 阶段有 Load 指令且 ID 阶段的消费者依赖其结果时，停顿 IF 和 ID：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> if_ready_go = <span class="comment">/* ... */</span> :</span><br><span class="line">    (mem_ref_we &amp;&amp; mem_rd != <span class="number">0</span> &amp;&amp;</span><br><span class="line">     ((id_src1_from_ref &amp;&amp; rf_raddr1 == mem_rd) ||</span><br><span class="line">      (id_src2_from_ref &amp;&amp; rf_raddr2 == mem_rd))) ? <span class="number">1&#x27;b0</span> : <span class="comment">/* ... */</span>;</span><br></pre></td></tr></table></figure>
-<h4 id="控制冒险">7.2 控制冒险</h4>
-<ul>
-<li><strong>BTB 预测</strong>：取指阶段根据 BTB
-预测跳转目标，减少分支惩罚</li>
-<li><strong>ID 阶段判定</strong>：分支指令在 ID 阶段通过 ALU
-组合逻辑判定是否跳转，延迟 1 周期</li>
-<li><strong>预测失败恢复</strong>：ID 阶段发现实际跳转方向与 BTB
-预测不一致时，冲刷 IF 阶段的错误预取指令</li>
-<li><strong>异常冲刷</strong>：异常和 ertn 指令在 WB
-阶段触发全流水线冲刷</li>
+
+<h4 id="7-2-控制冒险"><a href="#7-2-控制冒险" class="headerlink" title="7.2 控制冒险"></a>7.2 控制冒险</h4><ul>
+<li><strong>BTB 预测</strong>：取指阶段根据 BTB 预测跳转目标，减少分支惩罚</li>
+<li><strong>ID 阶段判定</strong>：分支指令在 ID 阶段通过 ALU 组合逻辑判定是否跳转，延迟 1 周期</li>
+<li><strong>预测失败恢复</strong>：ID 阶段发现实际跳转方向与 BTB 预测不一致时，冲刷 IF 阶段的错误预取指令</li>
+<li><strong>异常冲刷</strong>：异常和 ertn 指令在 WB 阶段触发全流水线冲刷</li>
 </ul>
-<h4 id="结构冒险">7.3 结构冒险</h4>
-<ul>
-<li><strong>AXI 总线竞争</strong>：取指和数据访存共享 AXI 通道，通过 ID
-区分（0=取指, 1=数据），数据请求优先</li>
-<li><strong>RegFile 读写竞争</strong>：RegFile 采用同步写、异步读，WB
-阶段写入的数据在下一周期可见。同一周期内 WB 写入和 ID
-读取同一寄存器时，通过 WB→ID 转发解决</li>
+<h4 id="7-3-结构冒险"><a href="#7-3-结构冒险" class="headerlink" title="7.3 结构冒险"></a>7.3 结构冒险</h4><ul>
+<li><strong>AXI 总线竞争</strong>：取指和数据访存共享 AXI 通道，通过 ID 区分（0&#x3D;取指, 1&#x3D;数据），数据请求优先</li>
+<li><strong>RegFile 读写竞争</strong>：RegFile 采用同步写、异步读，WB 阶段写入的数据在下一周期可见。同一周期内 WB 写入和 ID 读取同一寄存器时，通过 WB→ID 转发解决</li>
 </ul>
-<h3 id="八difftest-支持">八、Difftest 支持</h3>
-<p>设计中集成了 NEMU difftest 接口，通过 <code>DIFFTEST_EN</code>
-宏条件编译：</p>
+<h3 id="八、Difftest-支持"><a href="#八、Difftest-支持" class="headerlink" title="八、Difftest 支持"></a>八、Difftest 支持</h3><p>设计中集成了 NEMU difftest 接口，通过 <code>DIFFTEST_EN</code> 宏条件编译：</p>
 <ul>
-<li><strong>寄存器对比</strong>：RegFile 导出全部 32
-个寄存器值（<code>rf_regs_diff</code>）</li>
-<li><strong>CSR 对比</strong>：CSR 模块导出 26 个 CSR
-的完整状态（<code>csr_all_diff</code>，832-bit 总线）</li>
-<li><strong>在线比对</strong>：每条指令在 WB 阶段提交时，将
-PC、寄存器、CSR 状态发送给 NEMU 比对</li>
+<li><strong>寄存器对比</strong>：RegFile 导出全部 32 个寄存器值（<code>rf_regs_diff</code>）</li>
+<li><strong>CSR 对比</strong>：CSR 模块导出 26 个 CSR 的完整状态（<code>csr_all_diff</code>，832-bit 总线）</li>
+<li><strong>在线比对</strong>：每条指令在 WB 阶段提交时，将 PC、寄存器、CSR 状态发送给 NEMU 比对</li>
 </ul>
-<hr />
-<h2 id="result结果">Result（结果）</h2>
-<h3 id="设计成果">设计成果</h3>
-<table>
+<hr>
+<h2 id="Result（结果）"><a href="#Result（结果）" class="headerlink" title="Result（结果）"></a>Result（结果）</h2><h3 id="设计成果"><a href="#设计成果" class="headerlink" title="设计成果"></a>设计成果</h3><table>
 <thead>
 <tr>
 <th>指标</th>
 <th>结果</th>
 </tr>
 </thead>
-<tbody>
-<tr>
+<tbody><tr>
 <td>指令集</td>
 <td>LoongArch32 (LA32R) 全指令支持</td>
 </tr>
@@ -564,10 +460,8 @@ PC、寄存器、CSR 状态发送给 NEMU 比对</li>
 <td>验证方法</td>
 <td>Verilator + NEMU difftest</td>
 </tr>
-</tbody>
-</table>
-<h3 id="模块规模统计">模块规模统计</h3>
-<table>
+</tbody></table>
+<h3 id="模块规模统计"><a href="#模块规模统计" class="headerlink" title="模块规模统计"></a>模块规模统计</h3><table>
 <thead>
 <tr>
 <th>模块</th>
@@ -575,8 +469,7 @@ PC、寄存器、CSR 状态发送给 NEMU 比对</li>
 <th>功能</th>
 </tr>
 </thead>
-<tbody>
-<tr>
+<tbody><tr>
 <td>core_top</td>
 <td>core_top.v</td>
 <td>顶层模块，流水线互连和冒险控制</td>
@@ -657,10 +550,9 @@ PC、寄存器、CSR 状态发送给 NEMU 比对</li>
 <td>译码器宏模块</td>
 </tr>
 <tr>
-<td>*_readygo / *_allow_in / *_reg</td>
+<td>*_readygo &#x2F; *_allow_in &#x2F; *_reg</td>
 <td>多个文件</td>
 <td>流水线级寄存器和控制</td>
 </tr>
-</tbody>
-</table>
+</tbody></table>
 </div><nav class="pagination"><a id="left-navigator" href="/2026/07/04/LoongArch32-CPU-Timing-and-Architecture-Vulnerabilities/">AnxChip中亟待解决的问题分析</a><a id="right-navigator" href="/2026/07/04/LoongArch32-CPU-ICache-Coherence-and-RAW-Hazard/">LoongArch32 CPU 设计：I-Cache 一致性与 RAW 冒险分析</a></nav></div><nav id="footer"><ul id="footer-links"><li><a href="/about">About</a></li><li><a href="/archives">Archives</a></li><li><a href="/atom.xml">RSS</a></li><li><a target="_blank" rel="noopener" href="https://icylogic.net" class="out-site">Theme.Carbon</a></li><li><a target="_blank" rel="noopener" href="https://github.com/hexojs/hexo" class="out-site">Hexo</a></li></ul></nav></div></body></html>
