@@ -1,0 +1,162 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="author" content="Tian"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>2026-07-06-UPDATED:全部性能测试通过与Cache布局优化</title><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/normalize/3.0.3/normalize.min.css"><link rel="stylesheet" type="text/css" href="/css/carbon.css"><script defer="defer" src="//cdn.jsdelivr.net/jquery/2.1.4/jquery.min.js"></script><script defer="defer" src="//cdn.jsdelivr.net/jquery.pjax/1.9.5/jquery.pjax.min.js"></script><link rel="stylesheet" href="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.css" type="text/css" media="screen"><script defer="defer" type="text/javascript" src="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.pack.js"></script><script>var performFancybox = true;</script><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/katex/0.5.0/katex.min.css"><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/katex.min.js"></script><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/contrib/auto-render.min.js"></script><script>var doRenderMath = 'katex';</script><script defer="defer" src="/js/carbon.js"></script><meta name="generator" content="Hexo 8.1.1"></head><body><div id="container"><div id="banner"><h1 id="site-title"><a href="/">Tian`s Blog</a></h1><p id="site-subtitle"></p></div><div id="content"><div class="meta"><h2 class="article-title"><a href="/2026/07/06/2026-07-06-UPDATED-%E5%85%A8%E9%83%A8%E6%80%A7%E8%83%BD%E6%B5%8B%E8%AF%95%E9%80%9A%E8%BF%87%E4%B8%8ECache%E5%B8%83%E5%B1%80%E4%BC%98%E5%8C%96">2026-07-06-UPDATED:全部性能测试通过与Cache布局优化</a></h2><div class="article-date"><a href="javascript:void(0);" class="extra-switch">2026-07-06</a></div></div><div class="extra"><span class="Tags">Tags: <a href="/tags/CPU%E8%AE%BE%E8%AE%A1/">CPU设计</a>, <a href="/tags/LoongArch/">LoongArch</a>, <a href="/tags/Verilog/">Verilog</a>, <a href="/tags/%E6%9B%B4%E6%96%B0%E6%97%A5%E5%BF%97/">更新日志</a>.</span></div><div class="extra"><span class="Categories">Categories: <a href="/categories/%E7%A1%AC%E4%BB%B6%E8%AE%BE%E8%AE%A1/">硬件设计</a>.</span></div><div class="article-content"><div class="gallery"></div><h2 id="概述">概述</h2>
+<p>本次更新涵盖 3
+个提交（<code>7cfbf11</code>、<code>97f44b8</code>、<code>68d2e77</code>），涉及
+5 个文件，净变更 +332 / -222 行。成果：<strong>所有性能测试通过，主频
+70MHz，Cache 布局优化</strong>。</p>
+<p>核心改动分为三部分：分支重定向去重与取指数据一致性修复（<code>core_top.v</code>
+/ <code>pc_reg.v</code>）、Difftest Store
+事件精确化（<code>core_top.v</code>）、I-Cache / D-Cache 状态机重构与
+Block RAM 映射（<code>icache_two_way.v</code> /
+<code>dcache_two_way.v</code>）。</p>
+<hr />
+<h2 id="修改内容">修改内容</h2>
+<h3 id="分支重定向去重id_br_sent">1.
+分支重定向去重：<code>id_br_sent</code></h3>
+<p><strong>文件</strong>：<code>core_top.v:362-376</code></p>
+<p><strong>问题</strong>：当流水线停顿时（如 I-Cache Miss 等待 AXI
+响应），ID 阶段的分支判定结果 <code>id_br_taken_safe</code>
+会持续有效。每个时钟周期都会重新触发分支重定向，导致 PC
+被反复改写、延迟槽指令被反复冲刷，引发流水线行为混乱。</p>
+<p><strong>修复</strong>：新增 <code>id_br_sent</code>
+寄存器，记录已发送过的分支重定向。当同一 PC
+的分支已被处理且流水线未推进时，抑制重复触发：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">reg</span>  id_br_sent;</span><br><span class="line"><span class="keyword">reg</span> [<span class="number">31</span>:<span class="number">0</span>] id_br_sent_pc;</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> id_br_taken_raw  = id_br_taken &amp;&amp; pipline_is_not_stalled;</span><br><span class="line"><span class="keyword">assign</span> id_br_taken_safe = id_br_taken_raw &amp;&amp; (!id_br_sent || id_pc != id_br_sent_pc);</span><br><span class="line"><span class="keyword">assign</span> id_br_redirect   = id_br_taken_safe &amp;&amp; (id_br_target != id_pc + <span class="number">32&#x27;d4</span>);</span><br><span class="line"></span><br><span class="line"><span class="keyword">always</span> @(<span class="keyword">posedge</span> clk) <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (rst || wb_ex || wb_is_ertn) <span class="keyword">begin</span></span><br><span class="line">        id_br_sent &lt;= <span class="number">1&#x27;b0</span>;</span><br><span class="line">        id_br_sent_pc &lt;= <span class="number">32&#x27;b0</span>;</span><br><span class="line">    <span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">if</span> (!(if_ready_go===<span class="number">1&#x27;b0</span>) &amp;&amp; id_allow_in) <span class="keyword">begin</span></span><br><span class="line">        id_br_sent &lt;= <span class="number">1&#x27;b0</span>;</span><br><span class="line">        id_br_sent_pc &lt;= <span class="number">32&#x27;b0</span>;</span><br><span class="line">    <span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">if</span> (id_br_taken_safe) <span class="keyword">begin</span></span><br><span class="line">        id_br_sent &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line">        id_br_sent_pc &lt;= id_pc;</span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+<p>当流水线正常推进（<code>if_ready_go &amp;&amp; id_allow_in</code>）时清除标记，允许下一条分支被处理。</p>
+<hr />
+<h3 id="pc-寄存器简化移除-pc_br_taken_memory">2. PC 寄存器简化：移除
+<code>pc_br_taken_memory</code></h3>
+<p><strong>文件</strong>：<code>pc_reg.v:22-70</code></p>
+<p><strong>问题</strong>：前一版本在 <code>pc_reg.v</code> 中引入了
+<code>pc_target_memory</code> / <code>pc_br_taken_memory</code>
+延迟寄存器，试图捕获被错过的分支脉冲。但该机制引入了额外的状态复杂性，且在
+<code>id_br_sent</code> 去重逻辑生效后已不再需要。</p>
+<p><strong>修复</strong>：移除 <code>pc_target_memory</code> 和
+<code>pc_br_taken_memory</code> 相关的全部逻辑，回归直接处理：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">if</span> (pc_br_taken &amp;&amp; pipline_is_not_stalled) <span class="keyword">begin</span></span><br><span class="line">    if_pc &lt;= nextpc;</span><br><span class="line">    nextpc &lt;= pc_br_target;</span><br><span class="line">    if_inst_tlb_ex &lt;= inst_tlb_ex;</span><br><span class="line"><span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">casez</span> (!(pre_if_ready_go===<span class="number">1&#x27;b0</span>)&amp;&amp;if_allow_in)</span><br><span class="line">        <span class="comment">// ... normal PC+4 / BTB path ...</span></span><br><span class="line">    <span class="keyword">endcase</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+<p>分支重定向仍然在 <code>casez</code> 之前处理，保证 IF
+停顿时不会错过跳转。<code>id_br_sent</code> 保证了不会重复触发。</p>
+<hr />
+<h3 id="取指数据-pc-匹配inst_fetch_pc">3. 取指数据 PC
+匹配：<code>inst_fetch_pc</code></h3>
+<p><strong>文件</strong>：<code>core_top.v:298-360</code></p>
+<p><strong>问题</strong>：I-Cache 命中响应或 AXI
+取指返回的数据可能对应之前的 PC（流水线停顿期间 PC
+未变但请求已发出）。原设计使用 <code>inst_sram_rdata_safe</code>
+作为缓存数据，但不检查该数据是否对应当前
+<code>if_pc</code>，导致停顿恢复后使用了陈旧的取指结果。</p>
+<p><strong>修复</strong>：新增 <code>inst_fetch_pc</code>
+寄存器，在取指请求被接受时（<code>inst_sram_req &amp;&amp; inst_sram_addr_ok</code>）记录对应的
+PC。<code>if_inst</code> 选择逻辑增加 PC 匹配检查：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> if_inst = rst ? <span class="number">32&#x27;h02800000</span> :</span><br><span class="line">                 (id_br_redirect || br_cancel_fallthrough) ? <span class="number">32&#x27;h02800000</span> :</span><br><span class="line">                 (real_inst_data_ok &amp;&amp; inst_sram_rdata_pc_match) ? inst_sram_rdata :</span><br><span class="line">                 (inst_sram_rdata_safe_valid &amp;&amp; inst_sram_rdata_safe_pc == if_pc) ? inst_sram_rdata_safe : <span class="number">32&#x27;h02800000</span>;</span><br></pre></td></tr></table></figure>
+<p>同时新增 <code>if_suppress_dup_fetch_req</code>，当当前周期
+<code>inst_sram_addr</code> 与上一周期已采样的
+<code>if_last_sampled_pc</code> 相同时，抑制重复取指请求，避免 AXI
+总线上的无效事务。</p>
+<hr />
+<h3 id="difftest-store-事件精确化">4. Difftest Store 事件精确化</h3>
+<p><strong>文件</strong>：<code>core_top.v:2451-2537</code></p>
+<p><strong>问题</strong>：原 Difftest Store 事件使用 1-bit 的
+<code>cmt_inst_st_en</code> 和 32-bit 的
+<code>cmt_memvis_data</code>，无法区分 Store 的字节粒度（st.b / st.h /
+st.w）。此外，<code>cmt_memvis_paddr</code> 直接使用虚拟地址，未经过 DMW
+翻译，导致 NEMU 比对时物理地址不匹配。</p>
+<p><strong>修复</strong>：</p>
+<p><strong>4a. 字节使能</strong>：<code>cmt_inst_st_en</code> 从 1-bit
+扩展为 8-bit，根据 <code>wb_wdram_num</code>
+生成对应的字节使能掩码：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">cmt_inst_st_en &lt;= wb_is_store ? ((wb_wdram_num == <span class="number">2&#x27;b00</span>) ? <span class="number">8&#x27;b0000_0100</span> :</span><br><span class="line">                                  (wb_wdram_num == <span class="number">2&#x27;b10</span>) ? <span class="number">8&#x27;b0000_0010</span> :</span><br><span class="line">                                  (wb_wdram_num == <span class="number">2&#x27;b01</span>) ? <span class="number">8&#x27;b0000_0001</span> :</span><br><span class="line">                                                             <span class="number">8&#x27;b0000_0000</span>) :</span><br><span class="line">                                                  <span class="number">8&#x27;b0000_0000</span>;</span><br></pre></td></tr></table></figure>
+<p><strong>4b. 数据扩展</strong>：<code>cmt_memvis_data</code> 从 32-bit
+扩展为 64-bit，低 32 位为字节对齐后的 Store 数据，高 32 位补零：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">cmt_memvis_data &lt;= (wb_wdram_num == <span class="number">2&#x27;b01</span>) ? &#123;<span class="number">32&#x27;b0</span>, (&#123;<span class="number">24&#x27;b0</span>, wb_dram_wdata[<span class="number">7</span>:<span class="number">0</span>]&#125; &lt;&lt; (<span class="number">8</span> * wb_data_addr[<span class="number">1</span>:<span class="number">0</span>]))&#125; :</span><br><span class="line">                   (wb_wdram_num == <span class="number">2&#x27;b10</span>) ? &#123;<span class="number">32&#x27;b0</span>, (&#123;<span class="number">16&#x27;b0</span>, wb_dram_wdata[<span class="number">15</span>:<span class="number">0</span>]&#125; &lt;&lt; (<span class="number">8</span> * &#123;wb_data_addr[<span class="number">1</span>], <span class="number">1&#x27;b0</span>&#125;))&#125; :</span><br><span class="line">                                             &#123;<span class="number">32&#x27;b0</span>, wb_dram_wdata&#125;;</span><br></pre></td></tr></table></figure>
+<p><strong>4c. DMW 物理地址翻译</strong>：新增
+<code>wb_store_paddr</code>，根据
+<code>csr_crmd_da</code>、<code>csr_crmd_pg</code>、DMW 窗口配置将 Store
+的虚拟地址翻译为物理地址：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> wb_store_paddr = (csr_crmd_da &amp;&amp; !csr_crmd_pg) ? wb_data_addr :</span><br><span class="line">                        wb_store_dmw0_en              ? &#123;csr_dmw0_pseg, wb_data_addr[<span class="number">28</span>:<span class="number">0</span>]&#125; :</span><br><span class="line">                        wb_store_dmw1_en              ? &#123;csr_dmw1_pseg, wb_data_addr[<span class="number">28</span>:<span class="number">0</span>]&#125; :</span><br><span class="line">                                                         wb_data_addr;</span><br></pre></td></tr></table></figure>
+<p><code>cmt_memvis_paddr</code> 改为使用
+<code>wb_store_paddr</code>，使 Difftest 比对使用正确的物理地址。</p>
+<p><strong>4d. MMIO Store 识别</strong>：新增
+<code>wb_store_mmio</code>，识别地址范围 <code>0xbfe0_0000</code> –
+<code>0xbfff_ffff</code> 的 MMIO Store 操作，确保外设写入也被上报给
+NEMU。</p>
+<hr />
+<h3 id="cache-状态机重构新增-s_lookup-状态">5. Cache 状态机重构：新增
+<code>S_LOOKUP</code> 状态</h3>
+<p><strong>文件</strong>：<code>icache_two_way.v</code>、<code>dcache_two_way.v</code></p>
+<p><strong>问题</strong>：原设计中，I-Cache 和 D-Cache 在
+<code>S_IDLE</code> 状态接收到请求后，同周期内完成 Tag
+查找、命中判定、数据选择和状态跳转。这条组合逻辑路径包含 SRAM 读取 + Tag
+比较 + 数据 MUX，在 FPGA 上是时序瓶颈。同时，所有 Cache
+阵列（<code>data0</code>/<code>data1</code>）使用 <code>reg</code>
+声明，综合工具默认映射为分布式 RAM（LUT RAM），无法利用 FPGA 的 Block
+RAM 资源。</p>
+<p><strong>修复</strong>：新增 <code>S_LOOKUP</code> 状态，将 Tag
+查找与命中处理分为两个周期：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">原：S_IDLE → (命中) S_HIT_RESP / (未命中) S_REF_REQ / (Uncached) S_UNC_REQ</span><br><span class="line">新：S_IDLE → S_LOOKUP → (命中) S_HIT_RESP / (未命中) S_REF_REQ / (Cacop) S_CACOP_RESP</span><br></pre></td></tr></table></figure>
+<p>在 <code>S_IDLE</code> 接收请求时，将对应 Index 的 Cache
+行数据读入寄存器 <code>data0_r</code> / <code>data1_r</code>：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line">S_IDLE: <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (req) <span class="keyword">begin</span></span><br><span class="line">        req_index &lt;= index_l;</span><br><span class="line">        <span class="comment">// ... 锁存请求参数 ...</span></span><br><span class="line">        data0_r &lt;= data0[index_l];</span><br><span class="line">        data1_r &lt;= data1[index_l];</span><br><span class="line">        state &lt;= uncached ? S_UNC_REQ : S_LOOKUP;</span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">end</span></span><br><span class="line">S_LOOKUP: <span class="keyword">begin</span></span><br><span class="line">    <span class="comment">// 使用 data0_r / data1_r 进行命中判定和数据选择</span></span><br><span class="line">    <span class="keyword">if</span> (hit_now) <span class="keyword">begin</span></span><br><span class="line">        resp_data &lt;= select_word(hit_way_now ? data1_r : data0_r, req_word);</span><br><span class="line">        state &lt;= S_HIT_RESP;</span><br><span class="line">    <span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">begin</span></span><br><span class="line">        state &lt;= S_REF_REQ;</span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+<p><strong>影响</strong>：Tag 查找路径从 “SRAM 读取 + 比较 + MUX” 缩短为
+“寄存器读取 + 比较 + MUX”，关键路径延迟显著降低。代价是命中延迟增加 1
+周期。</p>
+<hr />
+<h3 id="cache-参数化与-block-ram-映射">6. Cache 参数化与 Block RAM
+映射</h3>
+<p><strong>文件</strong>：<code>icache_two_way.v</code>、<code>dcache_two_way.v</code></p>
+<p><strong>修复</strong>：将硬编码的 Cache 参数提取为
+<code>localparam</code>：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">localparam</span> CACHE_INDEX_BITS = <span class="number">8</span>;</span><br><span class="line"><span class="keyword">localparam</span> CACHE_LINES      = <span class="number">1</span> &lt;&lt; CACHE_INDEX_BITS;</span><br><span class="line"><span class="keyword">localparam</span> CACHE_TAG_BITS   = <span class="number">32</span> - <span class="number">4</span> - CACHE_INDEX_BITS;</span><br></pre></td></tr></table></figure>
+<p>所有阵列声明改用参数化宽度：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">reg</span> [CACHE_TAG_BITS-<span class="number">1</span>:<span class="number">0</span>] tag0 [<span class="number">0</span>:CACHE_LINES-<span class="number">1</span>];</span><br><span class="line"><span class="keyword">reg</span> [CACHE_TAG_BITS-<span class="number">1</span>:<span class="number">0</span>] tag1 [<span class="number">0</span>:CACHE_LINES-<span class="number">1</span>];</span><br><span class="line">(* ram_style = <span class="string">&quot;block&quot;</span> *) <span class="keyword">reg</span> [<span class="number">127</span>:<span class="number">0</span>] data0 [<span class="number">0</span>:CACHE_LINES-<span class="number">1</span>];</span><br><span class="line">(* ram_style = <span class="string">&quot;block&quot;</span> *) <span class="keyword">reg</span> [<span class="number">127</span>:<span class="number">0</span>] data1 [<span class="number">0</span>:CACHE_LINES-<span class="number">1</span>];</span><br></pre></td></tr></table></figure>
+<p><code>(* ram_style = "block" *)</code> 属性指示综合工具将 Cache
+数据阵列映射为 Block RAM，而非分布式 LUT RAM。对于 256 项 × 128-bit
+的阵列（每路 4KB），Block RAM 的读取延迟为 1 个时钟周期（同步读），与
+<code>S_LOOKUP</code> 状态的流水化设计匹配。</p>
+<p>Tag
+阵列（<code>tag0</code>/<code>tag1</code>）和元数据阵列（<code>valid0</code>/<code>valid1</code>/<code>dirty0</code>/<code>dirty1</code>/<code>used</code>）保持分布式
+RAM，因为它们的读取需要在 <code>S_IDLE</code> 同周期完成以决定
+<code>S_LOOKUP</code> 的跳转方向。</p>
+<hr />
+<h3 id="调试日志清理">7. 调试日志清理</h3>
+<p><strong>文件</strong>：<code>core_top.v</code>、<code>pc_reg.v</code></p>
+<p>移除了 <code>7cfbf11</code> 提交中引入的 CoreMark PC
+调试日志（<code>[CMPCDBG]</code>、<code>[PCDBG]</code>），共约 70 行
+<code>$display</code> 代码。这些日志在 <code>97f44b8</code>
+提交中确认问题已修复后删除。</p>
+<hr />
+<h2 id="修改文件清单">修改文件清单</h2>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>文件</th>
+<th>变更</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>core_top.v</code></td>
+<td>分支去重、取指 PC 匹配、Difftest Store 精确化、调试日志清理</td>
+</tr>
+<tr>
+<td><code>pc_reg.v</code></td>
+<td>移除 <code>pc_br_taken_memory</code> 延迟逻辑，回归直接处理</td>
+</tr>
+<tr>
+<td><code>icache_two_way.v</code></td>
+<td>新增 <code>S_LOOKUP</code> 状态、参数化、Block RAM 映射</td>
+</tr>
+<tr>
+<td><code>dcache_two_way.v</code></td>
+<td>新增 <code>S_LOOKUP</code> 状态、参数化、Block RAM 映射</td>
+</tr>
+<tr>
+<td><code>ID_REg.v</code></td>
+<td>移除多余空行</td>
+</tr>
+</tbody>
+</table>
+</div><nav class="pagination"><a id="right-navigator" href="/2026/07/05/2026-07-05-UPDATED-%E4%BF%AE%E5%A4%8DLAB15/">2026-07-05-UPDATED:修复LAB15</a></nav></div><nav id="footer"><ul id="footer-links"><li><a href="/about">About</a></li><li><a href="/archives">Archives</a></li><li><a href="/atom.xml">RSS</a></li><li><a target="_blank" rel="noopener" href="https://icylogic.net" class="out-site">Theme.Carbon</a></li><li><a target="_blank" rel="noopener" href="https://github.com/hexojs/hexo" class="out-site">Hexo</a></li></ul></nav></div></body></html>
