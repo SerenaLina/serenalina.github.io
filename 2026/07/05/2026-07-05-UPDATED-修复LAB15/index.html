@@ -1,115 +1,61 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="author" content="Tian"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>2026-07-05-UPDATED:修复LAB15</title><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/normalize/3.0.3/normalize.min.css"><link rel="stylesheet" type="text/css" href="/css/carbon.css"><script defer="defer" src="//cdn.jsdelivr.net/jquery/2.1.4/jquery.min.js"></script><script defer="defer" src="//cdn.jsdelivr.net/jquery.pjax/1.9.5/jquery.pjax.min.js"></script><link rel="stylesheet" href="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.css" type="text/css" media="screen"><script defer="defer" type="text/javascript" src="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.pack.js"></script><script>var performFancybox = true;</script><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/katex/0.5.0/katex.min.css"><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/katex.min.js"></script><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/contrib/auto-render.min.js"></script><script>var doRenderMath = 'katex';</script><script defer="defer" src="/js/carbon.js"></script><meta name="generator" content="Hexo 8.1.1"></head><body><div id="container"><div id="banner"><h1 id="site-title"><a href="/">Tian`s Blog</a></h1><p id="site-subtitle"></p></div><div id="content"><div class="meta"><h2 class="article-title"><a href="/2026/07/05/2026-07-05-UPDATED-%E4%BF%AE%E5%A4%8DLAB15">2026-07-05-UPDATED:修复LAB15</a></h2><div class="article-date"><a href="javascript:void(0);" class="extra-switch">2026-07-05</a></div></div><div class="extra"><span class="Tags">Tags: <a href="/tags/CPU%E8%AE%BE%E8%AE%A1/">CPU设计</a>, <a href="/tags/LoongArch/">LoongArch</a>, <a href="/tags/Verilog/">Verilog</a>, <a href="/tags/%E6%9B%B4%E6%96%B0%E6%97%A5%E5%BF%97/">更新日志</a>.</span></div><div class="extra"><span class="Categories">Categories: <a href="/categories/%E7%A1%AC%E4%BB%B6%E8%AE%BE%E8%AE%A1/">硬件设计</a>.</span></div><div class="article-content"><div class="gallery"></div><h2 id="概述">概述</h2>
-<p>提交 <code>83d784b</code>（“fix bug”）修复了 LAB15
-测试中的流水线挂起和虚假 INE 异常问题。本次更新涉及 6 个文件，净变更
-+104 / -152 行，核心修改集中在分支重定向逻辑、异常抑制、Store 写入安全和
-I-Cache 状态机。</p>
-<hr />
-<h2 id="修复内容">修复内容</h2>
-<h3 id="分支重定向条件收窄id_br_redirect">1.
-分支重定向条件收窄：<code>id_br_redirect</code></h3>
-<p><strong>文件</strong>：<code>core_top.v:364-366</code></p>
-<p><strong>问题</strong>：原设计中，ID 阶段判定分支 taken
-后无条件触发重定向（<code>id_br_taken_safe</code>），即使分支目标就是下一条指令地址（<code>PC+4</code>）。这种”无效跳转”会白白冲刷流水线，并在性能测试的长延迟场景下引发问题。</p>
-<p><strong>修复</strong>：新增 <code>id_br_redirect</code>
-信号，仅当分支目标不等于 <code>PC+4</code> 时才触发重定向：</p>
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="author" content="Tian"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>2026-07-05-UPDATED:修复LAB15</title><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/normalize/3.0.3/normalize.min.css"><link rel="stylesheet" type="text/css" href="/css/carbon.css"><script defer="defer" src="//cdn.jsdelivr.net/jquery/2.1.4/jquery.min.js"></script><script defer="defer" src="//cdn.jsdelivr.net/jquery.pjax/1.9.5/jquery.pjax.min.js"></script><link rel="stylesheet" href="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.css" type="text/css" media="screen"><script defer="defer" type="text/javascript" src="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.pack.js"></script><script>var performFancybox = true;</script><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/katex/0.5.0/katex.min.css"><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/katex.min.js"></script><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/contrib/auto-render.min.js"></script><script>var doRenderMath = 'katex';</script><script defer="defer" src="/js/carbon.js"></script><meta name="generator" content="Hexo 8.1.1"></head><body><div id="container"><div id="banner"><h1 id="site-title"><a href="/">Tian`s Blog</a></h1><p id="site-subtitle"></p></div><div id="content"><div class="meta"><h2 class="article-title"><a href="/2026/07/05/2026-07-05-UPDATED-%E4%BF%AE%E5%A4%8DLAB15">2026-07-05-UPDATED:修复LAB15</a></h2><div class="article-date"><a href="javascript:void(0);" class="extra-switch">2026-07-05</a></div></div><div class="extra"><span class="Tags">Tags: <a href="/tags/CPU%E8%AE%BE%E8%AE%A1/">CPU设计</a>, <a href="/tags/LoongArch/">LoongArch</a>, <a href="/tags/Verilog/">Verilog</a>, <a href="/tags/%E6%9B%B4%E6%96%B0%E6%97%A5%E5%BF%97/">更新日志</a>.</span></div><div class="extra"><span class="Categories">Categories: <a href="/categories/%E7%A1%AC%E4%BB%B6%E8%AE%BE%E8%AE%A1/">硬件设计</a>.</span></div><div class="article-content"><div class="gallery"></div><h2 id="概述"><a href="#概述" class="headerlink" title="概述"></a>概述</h2><p>提交 <code>83d784b</code>（”fix bug”）修复了 LAB15 测试中的流水线挂起和虚假 INE 异常问题。本次更新涉及 6 个文件，净变更 +104 &#x2F; -152 行，核心修改集中在分支重定向逻辑、异常抑制、Store 写入安全和 I-Cache 状态机。</p>
+<hr>
+<h2 id="修复内容"><a href="#修复内容" class="headerlink" title="修复内容"></a>修复内容</h2><h3 id="1-分支重定向条件收窄：id-br-redirect"><a href="#1-分支重定向条件收窄：id-br-redirect" class="headerlink" title="1. 分支重定向条件收窄：id_br_redirect"></a>1. 分支重定向条件收窄：<code>id_br_redirect</code></h3><p><strong>文件</strong>：<code>core_top.v:364-366</code></p>
+<p><strong>问题</strong>：原设计中，ID 阶段判定分支 taken 后无条件触发重定向（<code>id_br_taken_safe</code>），即使分支目标就是下一条指令地址（<code>PC+4</code>）。这种”无效跳转”会白白冲刷流水线，并在性能测试的长延迟场景下引发问题。</p>
+<p><strong>修复</strong>：新增 <code>id_br_redirect</code> 信号，仅当分支目标不等于 <code>PC+4</code> 时才触发重定向：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> id_br_redirect;</span><br><span class="line"><span class="keyword">assign</span> id_br_redirect = id_br_taken_safe &amp;&amp; (id_br_target != id_pc + <span class="number">32&#x27;d4</span>);</span><br></pre></td></tr></table></figure>
-<p>所有原先使用 <code>id_br_taken_safe</code>
-的重定向路径——<code>br_need_cancel</code>、<code>if_inst</code>
-注入、<code>id_need_cancel</code>、<code>id_next_inst_cancel</code>、<code>pc_reg</code>
-输入——全部替换为 <code>id_br_redirect</code>。</p>
-<p><strong>影响</strong>：消除了 fall-through
-分支的无谓冲刷，同时避免了因冲刷导致的取指空洞。</p>
-<hr />
-<h3 id="ine-异常门控id_ex_ine_gated">2. INE
-异常门控：<code>id_ex_ine_gated</code></h3>
-<p><strong>文件</strong>：<code>core_top.v:649-651</code></p>
-<p><strong>问题</strong>：分支重定向后，IF
-阶段已取出的下一条指令（延迟槽后的指令）仍在流水线中传播。如果该指令的地址落在无效区域，ID
-阶段会检测到 INE（Instruction Non-Existent）异常。由于异常在 WB
-阶段统一处理，而分支冲刷也需要到 WB
-才生效，两者竞争导致虚假异常被提交。</p>
-<p><strong>修复</strong>：当 <code>br_need_cancel</code>
-有效时，抑制进入 EXE1 的 INE 异常信号：</p>
+
+<p>所有原先使用 <code>id_br_taken_safe</code> 的重定向路径——<code>br_need_cancel</code>、<code>if_inst</code> 注入、<code>id_need_cancel</code>、<code>id_next_inst_cancel</code>、<code>pc_reg</code> 输入——全部替换为 <code>id_br_redirect</code>。</p>
+<p><strong>影响</strong>：消除了 fall-through 分支的无谓冲刷，同时避免了因冲刷导致的取指空洞。</p>
+<hr>
+<h3 id="2-INE-异常门控：id-ex-ine-gated"><a href="#2-INE-异常门控：id-ex-ine-gated" class="headerlink" title="2. INE 异常门控：id_ex_ine_gated"></a>2. INE 异常门控：<code>id_ex_ine_gated</code></h3><p><strong>文件</strong>：<code>core_top.v:649-651</code></p>
+<p><strong>问题</strong>：分支重定向后，IF 阶段已取出的下一条指令（延迟槽后的指令）仍在流水线中传播。如果该指令的地址落在无效区域，ID 阶段会检测到 INE（Instruction Non-Existent）异常。由于异常在 WB 阶段统一处理，而分支冲刷也需要到 WB 才生效，两者竞争导致虚假异常被提交。</p>
+<p><strong>修复</strong>：当 <code>br_need_cancel</code> 有效时，抑制进入 EXE1 的 INE 异常信号：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> id_ex_ine_gated = id_ex_ine &amp;&amp; !br_need_cancel;</span><br></pre></td></tr></table></figure>
-<p><code>exe1_reg</code> 的 <code>id_ex_ine</code> 输入替换为
-<code>id_ex_ine_gated</code>。</p>
-<p><strong>影响</strong>：分支取消窗口内的投机指令不再产生虚假 INE
-异常，解决了 LAB15 中的异常误触发。</p>
-<hr />
-<h3 id="pc-寄存器分支重定向移出-casez">3. PC 寄存器分支重定向移出
-<code>casez</code></h3>
-<p><strong>文件</strong>：<code>pc_reg.v:56-68</code></p>
-<p><strong>问题</strong>：原设计中，<code>pc_br_taken</code>
-的处理嵌套在 <code>casez(if_allow_in)</code> 内部。当 IF 阶段因 I-Cache
-Miss 或 AXI
-读延迟而停顿（<code>if_allow_in=0</code>）时，<code>pc_br_taken</code>
-脉冲可能只持续一个周期而被错过。PC 继续从 <code>nextpc</code>
-顺序推进，跳入无效 padding 区域并触发 INE 异常，导致流水线挂死。</p>
-<p><strong>修复</strong>：将 <code>pc_br_taken</code> 和
-<code>pc_br_taken_memory</code> 的处理移到 <code>casez</code>
-之前，作为独立的 <code>else if</code> 分支：</p>
+
+<p><code>exe1_reg</code> 的 <code>id_ex_ine</code> 输入替换为 <code>id_ex_ine_gated</code>。</p>
+<p><strong>影响</strong>：分支取消窗口内的投机指令不再产生虚假 INE 异常，解决了 LAB15 中的异常误触发。</p>
+<hr>
+<h3 id="3-PC-寄存器分支重定向移出-casez"><a href="#3-PC-寄存器分支重定向移出-casez" class="headerlink" title="3. PC 寄存器分支重定向移出 casez"></a>3. PC 寄存器分支重定向移出 <code>casez</code></h3><p><strong>文件</strong>：<code>pc_reg.v:56-68</code></p>
+<p><strong>问题</strong>：原设计中，<code>pc_br_taken</code> 的处理嵌套在 <code>casez(if_allow_in)</code> 内部。当 IF 阶段因 I-Cache Miss 或 AXI 读延迟而停顿（<code>if_allow_in=0</code>）时，<code>pc_br_taken</code> 脉冲可能只持续一个周期而被错过。PC 继续从 <code>nextpc</code> 顺序推进，跳入无效 padding 区域并触发 INE 异常，导致流水线挂死。</p>
+<p><strong>修复</strong>：将 <code>pc_br_taken</code> 和 <code>pc_br_taken_memory</code> 的处理移到 <code>casez</code> 之前，作为独立的 <code>else if</code> 分支：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">if</span> (pc_br_taken &amp;&amp; pipline_is_not_stalled &amp;&amp; !pc_br_taken_memory) <span class="keyword">begin</span></span><br><span class="line">    if_pc &lt;= nextpc;</span><br><span class="line">    nextpc &lt;= pc_br_target;</span><br><span class="line">    if_inst_tlb_ex &lt;= inst_tlb_ex;</span><br><span class="line"><span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">if</span> (pc_br_taken_memory===<span class="number">1&#x27;b1</span>) <span class="keyword">begin</span></span><br><span class="line">    if_pc &lt;= nextpc;</span><br><span class="line">    nextpc &lt;= (nextpc == pc_target_memory) ? nextpc + <span class="number">32&#x27;d4</span> : pc_target_memory;</span><br><span class="line">    if_inst_tlb_ex &lt;= inst_tlb_ex;</span><br><span class="line"><span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">casez</span> (!(pre_if_ready_go===<span class="number">1&#x27;b0</span>)&amp;&amp;if_allow_in)</span><br><span class="line">        <span class="comment">// ... normal PC+4 / BTB path ...</span></span><br><span class="line">    <span class="keyword">endcase</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
-<p><strong>影响</strong>：分支重定向不再依赖 IF 级的
-<code>allow_in</code> 信号，即使在长停顿期间也能正确捕获分支跳转。这是
-LAB15 挂死问题的直接修复点。</p>
-<hr />
-<h3 id="store-写入安全mem_trap_pending-exe2_self_trap">4. Store
-写入安全：<code>mem_trap_pending</code> /
-<code>exe2_self_trap</code></h3>
-<p><strong>文件</strong>：<code>core_top.v:1211-1225</code></p>
-<p><strong>问题</strong>：原设计中，Store 指令在 EXE2 阶段写入 D-Cache
-的控制信号 <code>data_sram_wstrb</code> 仅在 <code>wb_ex</code> 或
-<code>exe2_ex_ale</code> 有效时才被屏蔽。但如果 MEM
-阶段的指令携带异常（如 ADEF、ALE、TLB 异常），EXE2 阶段的 Store
-仍可能在异常冲刷生效前完成写入，造成不可逆的数据破坏。</p>
+
+<p><strong>影响</strong>：分支重定向不再依赖 IF 级的 <code>allow_in</code> 信号，即使在长停顿期间也能正确捕获分支跳转。这是 LAB15 挂死问题的直接修复点。</p>
+<hr>
+<h3 id="4-Store-写入安全：mem-trap-pending-exe2-self-trap"><a href="#4-Store-写入安全：mem-trap-pending-exe2-self-trap" class="headerlink" title="4. Store 写入安全：mem_trap_pending &#x2F; exe2_self_trap"></a>4. Store 写入安全：<code>mem_trap_pending</code> &#x2F; <code>exe2_self_trap</code></h3><p><strong>文件</strong>：<code>core_top.v:1211-1225</code></p>
+<p><strong>问题</strong>：原设计中，Store 指令在 EXE2 阶段写入 D-Cache 的控制信号 <code>data_sram_wstrb</code> 仅在 <code>wb_ex</code> 或 <code>exe2_ex_ale</code> 有效时才被屏蔽。但如果 MEM 阶段的指令携带异常（如 ADEF、ALE、TLB 异常），EXE2 阶段的 Store 仍可能在异常冲刷生效前完成写入，造成不可逆的数据破坏。</p>
 <p><strong>修复</strong>：新增两个异常检测信号：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> mem_trap_pending = !mem_need_cancel &amp;&amp; !mem_is_ertn &amp;&amp;</span><br><span class="line">    (mem_has_int || mem_ex_adef || mem_ex_brk || mem_ex_ine ||</span><br><span class="line">     mem_ex_ale || mem_is_syscall ||</span><br><span class="line">     (mem_inst_tlb_ex != <span class="number">2&#x27;b0</span>) || (mem_data_tlb_ex != <span class="number">3&#x27;b0</span>));</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> exe2_self_trap = !exe2_need_cancel &amp;&amp; !exe2_is_ertn &amp;&amp;</span><br><span class="line">    (exe2_has_int || exe2_ex_adef || exe2_ex_brk || exe2_ex_ine ||</span><br><span class="line">     exe2_ex_ale || exe2_is_syscall ||</span><br><span class="line">     (exe2_inst_tlb_ex != <span class="number">2&#x27;b0</span>) || (data_tlb_ex != <span class="number">3&#x27;b0</span>));</span><br></pre></td></tr></table></figure>
-<p>将
-<code>data_sram_wstrb</code>、<code>normal_data_sram_req</code>、<code>cacheop_req</code>、<code>exe2_addr_shake_ok</code>、<code>mem_data_shake_ok</code>
-的阻断条件从 <code>wb_ex || exe2_ex_ale</code> 扩展为
-<code>wb_ex || wb_is_ertn || mem_trap_pending || exe2_self_trap</code>。</p>
-<p><strong>影响</strong>：任何处于 MEM 或 EXE2
-阶段的异常指令都会阻塞其后继 Store 的写请求，直到异常在 WB
-阶段完成冲刷。杜绝了异常路径上的脏写问题。</p>
-<hr />
-<h3 id="i-cache-状态机保持s_hit_resp-s_ref_resp">5. I-Cache
-状态机保持：<code>S_HIT_RESP</code> / <code>S_REF_RESP</code></h3>
-<p><strong>文件</strong>：<code>icache_two_way.v:171, 194</code></p>
-<p><strong>问题</strong>：<code>S_HIT_RESP</code> 和
-<code>S_REF_RESP</code> 原先无条件回到
-<code>S_IDLE</code>。如果此时没有新的取指请求（<code>fetch_req=0</code>），状态机会空转回
-IDLE
-再重新进入请求处理，引入不必要的周期开销，并在某些时序窗口下导致响应丢失。</p>
+
+<p>将 <code>data_sram_wstrb</code>、<code>normal_data_sram_req</code>、<code>cacheop_req</code>、<code>exe2_addr_shake_ok</code>、<code>mem_data_shake_ok</code> 的阻断条件从 <code>wb_ex || exe2_ex_ale</code> 扩展为 <code>wb_ex || wb_is_ertn || mem_trap_pending || exe2_self_trap</code>。</p>
+<p><strong>影响</strong>：任何处于 MEM 或 EXE2 阶段的异常指令都会阻塞其后继 Store 的写请求，直到异常在 WB 阶段完成冲刷。杜绝了异常路径上的脏写问题。</p>
+<hr>
+<h3 id="5-I-Cache-状态机保持：S-HIT-RESP-S-REF-RESP"><a href="#5-I-Cache-状态机保持：S-HIT-RESP-S-REF-RESP" class="headerlink" title="5. I-Cache 状态机保持：S_HIT_RESP &#x2F; S_REF_RESP"></a>5. I-Cache 状态机保持：<code>S_HIT_RESP</code> &#x2F; <code>S_REF_RESP</code></h3><p><strong>文件</strong>：<code>icache_two_way.v:171, 194</code></p>
+<p><strong>问题</strong>：<code>S_HIT_RESP</code> 和 <code>S_REF_RESP</code> 原先无条件回到 <code>S_IDLE</code>。如果此时没有新的取指请求（<code>fetch_req=0</code>），状态机会空转回 IDLE 再重新进入请求处理，引入不必要的周期开销，并在某些时序窗口下导致响应丢失。</p>
 <p><strong>修复</strong>：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">S_HIT_RESP:  state &lt;= fetch_req ? S_IDLE : S_HIT_RESP;</span><br><span class="line">S_REF_RESP:  state &lt;= fetch_req ? S_IDLE : S_REF_RESP;</span><br></pre></td></tr></table></figure>
-<p><strong>影响</strong>：I-Cache
-在无请求时保持当前状态，避免无谓的状态翻转，提升了命中路径的稳定性。</p>
-<hr />
-<h3 id="调试日志清理">6. 调试日志清理</h3>
-<p><strong>文件</strong>：<code>core_top.v</code>、<code>sram_axi_bridge.v</code></p>
-<p>移除了调试阶段的 <code>$display</code>
-语句：<code>[POST-EX]</code>、<code>[CSR-FWD]</code>、<code>[CSR-EXE1]</code>、<code>[CSR-WB]</code>、<code>[LAB15-INE]</code>、<code>[LAB15-HANG]</code>、<code>[LAB15-IF]</code>、<code>[TLB-FILL]</code>、<code>[TLB-RD]</code>、<code>[AXI-AR]</code>、<code>[AXI-R]</code>。</p>
-<p>保留了三个精简的调试点： - <code>[MEM-ST]</code>：memcpy 区域的 Store
-写入追踪 - <code>[EX]</code>：WB 阶段异常摘要 -
-<code>[N53_ALEDBG]</code>：ALE
-异常路径追踪（<code>// synthesis translate_off</code>
-保护，不影响综合）</p>
+
+<p><strong>影响</strong>：I-Cache 在无请求时保持当前状态，避免无谓的状态翻转，提升了命中路径的稳定性。</p>
+<hr>
+<h3 id="6-调试日志清理"><a href="#6-调试日志清理" class="headerlink" title="6. 调试日志清理"></a>6. 调试日志清理</h3><p><strong>文件</strong>：<code>core_top.v</code>、<code>sram_axi_bridge.v</code></p>
+<p>移除了调试阶段的 <code>$display</code> 语句：<code>[POST-EX]</code>、<code>[CSR-FWD]</code>、<code>[CSR-EXE1]</code>、<code>[CSR-WB]</code>、<code>[LAB15-INE]</code>、<code>[LAB15-HANG]</code>、<code>[LAB15-IF]</code>、<code>[TLB-FILL]</code>、<code>[TLB-RD]</code>、<code>[AXI-AR]</code>、<code>[AXI-R]</code>。</p>
+<p>保留了三个精简的调试点：</p>
+<ul>
+<li><code>[MEM-ST]</code>：memcpy 区域的 Store 写入追踪</li>
+<li><code>[EX]</code>：WB 阶段异常摘要</li>
+<li><code>[N53_ALEDBG]</code>：ALE 异常路径追踪（<code>// synthesis translate_off</code> 保护，不影响综合）</li>
+</ul>
 <p>净减少约 100 行调试代码。</p>
-<hr />
-<h2 id="修改文件清单">修改文件清单</h2>
-<table>
-<colgroup>
-<col style="width: 50%" />
-<col style="width: 50%" />
-</colgroup>
+<hr>
+<h2 id="修改文件清单"><a href="#修改文件清单" class="headerlink" title="修改文件清单"></a>修改文件清单</h2><table>
 <thead>
 <tr>
 <th>文件</th>
 <th>变更</th>
 </tr>
 </thead>
-<tbody>
-<tr>
+<tbody><tr>
 <td><code>core_top.v</code></td>
 <td>分支重定向收窄、INE 门控、Store 安全阻断、调试日志清理</td>
 </tr>
@@ -119,7 +65,7 @@ IDLE
 </tr>
 <tr>
 <td><code>icache_two_way.v</code></td>
-<td><code>S_HIT_RESP</code> / <code>S_REF_RESP</code> 状态保持</td>
+<td><code>S_HIT_RESP</code> &#x2F; <code>S_REF_RESP</code> 状态保持</td>
 </tr>
 <tr>
 <td><code>sram_axi_bridge.v</code></td>
@@ -127,13 +73,11 @@ IDLE
 </tr>
 <tr>
 <td><code>.gitignore</code></td>
-<td>默认忽略所有内容，仅放行 <code>rtl/*.v</code> 和
-<code>.gitignore</code></td>
+<td>默认忽略所有内容，仅放行 <code>rtl/*.v</code> 和 <code>.gitignore</code></td>
 </tr>
 <tr>
 <td><code>README.md</code></td>
 <td>从 git 跟踪中移除</td>
 </tr>
-</tbody>
-</table>
+</tbody></table>
 </div><nav class="pagination"><a id="left-navigator" href="/2026/07/06/2026-07-06-UPDATED-%E5%85%A8%E9%83%A8%E6%80%A7%E8%83%BD%E6%B5%8B%E8%AF%95%E9%80%9A%E8%BF%87%E4%B8%8ECache%E5%B8%83%E5%B1%80%E4%BC%98%E5%8C%96/">2026-07-06-UPDATED:全部性能测试通过与Cache布局优化</a><a id="right-navigator" href="/2026/07/04/LoongArch32-CPU-Timing-and-Architecture-Vulnerabilities/">AnxChip中亟待解决的问题分析</a></nav></div><nav id="footer"><ul id="footer-links"><li><a href="/about">About</a></li><li><a href="/archives">Archives</a></li><li><a href="/atom.xml">RSS</a></li><li><a target="_blank" rel="noopener" href="https://icylogic.net" class="out-site">Theme.Carbon</a></li><li><a target="_blank" rel="noopener" href="https://github.com/hexojs/hexo" class="out-site">Hexo</a></li></ul></nav></div></body></html>
