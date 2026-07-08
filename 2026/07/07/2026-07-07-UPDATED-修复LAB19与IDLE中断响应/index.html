@@ -1,52 +1,108 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="author" content="Tian"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>2026-07-07-UPDATED:修复LAB19与IDLE中断响应</title><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/normalize/3.0.3/normalize.min.css"><link rel="stylesheet" type="text/css" href="/css/carbon.css"><script defer="defer" src="//cdn.jsdelivr.net/jquery/2.1.4/jquery.min.js"></script><script defer="defer" src="//cdn.jsdelivr.net/jquery.pjax/1.9.5/jquery.pjax.min.js"></script><link rel="stylesheet" href="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.css" type="text/css" media="screen"><script defer="defer" type="text/javascript" src="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.pack.js"></script><script>var performFancybox = true;</script><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/katex/0.5.0/katex.min.css"><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/katex.min.js"></script><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/contrib/auto-render.min.js"></script><script>var doRenderMath = 'katex';</script><script defer="defer" src="/js/carbon.js"></script><meta name="generator" content="Hexo 8.1.1"></head><body><div id="container"><div id="banner"><h1 id="site-title"><a href="/">Tian`s Blog</a></h1><p id="site-subtitle"></p></div><div id="content"><div class="meta"><h2 class="article-title"><a href="/2026/07/07/2026-07-07-UPDATED-%E4%BF%AE%E5%A4%8DLAB19%E4%B8%8EIDLE%E4%B8%AD%E6%96%AD%E5%93%8D%E5%BA%94">2026-07-07-UPDATED:修复LAB19与IDLE中断响应</a></h2><div class="article-date"><a href="javascript:void(0);" class="extra-switch">2026-07-07</a></div></div><div class="extra"><span class="Tags">Tags: <a href="/tags/CPU%E8%AE%BE%E8%AE%A1/">CPU设计</a>, <a href="/tags/LoongArch/">LoongArch</a>, <a href="/tags/Verilog/">Verilog</a>, <a href="/tags/%E6%9B%B4%E6%96%B0%E6%97%A5%E5%BF%97/">更新日志</a>.</span></div><div class="extra"><span class="Categories">Categories: <a href="/categories/%E7%A1%AC%E4%BB%B6%E8%AE%BE%E8%AE%A1/">硬件设计</a>.</span></div><div class="article-content"><div class="gallery"></div><h2 id="概述"><a href="#概述" class="headerlink" title="概述"></a>概述</h2><p>本次更新修复了 func_lab19 中的 IDLE 等待中断挂死问题，并修正了 CACOP Hit 型指令的 IPE 误触发。成果：<strong>func_lab19 修复通过（END by Syscall，132811 条指令），func_lab15 无回归，func_advance difftest 零失配</strong>。</p>
-<p>核心改动集中在 <code>core_top.v</code> 的 IDLE 等待中断状态机与 <code>Wb_reg.v</code> 的 WB 保持逻辑，涉及 2 个文件。</p>
-<hr>
-<h2 id="修改内容"><a href="#修改内容" class="headerlink" title="修改内容"></a>修改内容</h2><h3 id="1-IDLE-等待中断-FSM（核心修复）"><a href="#1-IDLE-等待中断-FSM（核心修复）" class="headerlink" title="1. IDLE 等待中断 FSM（核心修复）"></a>1. IDLE 等待中断 FSM（核心修复）</h3><p><strong>文件</strong>：<code>core_top.v:1319-1343</code></p>
-<p><strong>问题</strong>：LoongArch 语义中，执行 IDLE 后处理器核停止取指进入等待态，被 ECFG 使能的中断唤醒后在 IDLE 的下一条指令处响应中断，即 <code>era = idle + 4</code>。DUT 原来把 IDLE 当 NOP 直接穿过，导致 NEMU 停在 idle 等待中断时，DUT 已冲到 eentry，且 <code>era</code> 存成了 0。</p>
-<p>首次尝试通过 <code>mem_ready_go = 0</code> 将 idle+4 停在 WB，但审查 <code>Wb_reg.v</code> 发现：当 <code>mem_ready_go === 1&#39;b0</code> 时，Wb_reg 走 else 分支插入气泡（<code>wb_pc &lt;= 0</code>，全清），导致 WB 变成气泡 → <code>wb_valid = 0</code> → 中断落在气泡上 → <code>era = 0</code>、difftest 收不到异常事件、NEMU 永远停在 idle。</p>
-<p>进一步追踪证实：idle 提交那拍 MEM 已是气泡（<code>mem_pc = 0</code>），即 idle+4 在提交 idle 时早已不在流水线中——根本无法靠”停在 WB”拿到 era。</p>
-<p><strong>修复</strong>：不依赖 WB 内容，改为捕获 idle+4 + 唤醒当拍注入：</p>
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="author" content="Tian"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>2026-07-07-UPDATED:修复LAB19与IDLE中断响应</title><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/normalize/3.0.3/normalize.min.css"><link rel="stylesheet" type="text/css" href="/css/carbon.css"><script defer="defer" src="//cdn.jsdelivr.net/jquery/2.1.4/jquery.min.js"></script><script defer="defer" src="//cdn.jsdelivr.net/jquery.pjax/1.9.5/jquery.pjax.min.js"></script><link rel="stylesheet" href="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.css" type="text/css" media="screen"><script defer="defer" type="text/javascript" src="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.pack.js"></script><script>var performFancybox = true;</script><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/katex/0.5.0/katex.min.css"><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/katex.min.js"></script><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/contrib/auto-render.min.js"></script><script>var doRenderMath = 'katex';</script><script defer="defer" src="/js/carbon.js"></script><meta name="generator" content="Hexo 8.1.1"></head><body><div id="container"><div id="banner"><h1 id="site-title"><a href="/">Tian`s Blog</a></h1><p id="site-subtitle"></p></div><div id="content"><div class="meta"><h2 class="article-title"><a href="/2026/07/07/2026-07-07-UPDATED-%E4%BF%AE%E5%A4%8DLAB19%E4%B8%8EIDLE%E4%B8%AD%E6%96%AD%E5%93%8D%E5%BA%94">2026-07-07-UPDATED:修复LAB19与IDLE中断响应</a></h2><div class="article-date"><a href="javascript:void(0);" class="extra-switch">2026-07-07</a></div></div><div class="extra"><span class="Tags">Tags: <a href="/tags/CPU%E8%AE%BE%E8%AE%A1/">CPU设计</a>, <a href="/tags/LoongArch/">LoongArch</a>, <a href="/tags/Verilog/">Verilog</a>, <a href="/tags/%E6%9B%B4%E6%96%B0%E6%97%A5%E5%BF%97/">更新日志</a>.</span></div><div class="extra"><span class="Categories">Categories: <a href="/categories/%E7%A1%AC%E4%BB%B6%E8%AE%BE%E8%AE%A1/">硬件设计</a>.</span></div><div class="article-content"><div class="gallery"></div><h2 id="概述">概述</h2>
+<p>本次更新修复了 func_lab19 中的 IDLE 等待中断挂死问题，并修正了 CACOP
+Hit 型指令的 IPE 误触发。成果：<strong>func_lab19 修复通过（END by
+Syscall，132811 条指令），func_lab15 无回归，func_advance difftest
+零失配</strong>。</p>
+<p>核心改动集中在 <code>core_top.v</code> 的 IDLE 等待中断状态机与
+<code>Wb_reg.v</code> 的 WB 保持逻辑，涉及 2 个文件。</p>
+<hr />
+<h2 id="修改内容">修改内容</h2>
+<h3 id="idle-等待中断-fsm核心修复">1. IDLE 等待中断 FSM（核心修复）</h3>
+<p><strong>文件</strong>：<code>core_top.v:1319-1343</code></p>
+<p><strong>问题</strong>：LoongArch 语义中，执行 IDLE
+后处理器核停止取指进入等待态，被 ECFG 使能的中断唤醒后在 IDLE
+的下一条指令处响应中断，即 <code>era = idle + 4</code>。DUT 原来把 IDLE
+当 NOP 直接穿过，导致 NEMU 停在 idle 等待中断时，DUT 已冲到 eentry，且
+<code>era</code> 存成了 0。</p>
+<p>首次尝试通过 <code>mem_ready_go = 0</code> 将 idle+4 停在 WB，但审查
+<code>Wb_reg.v</code> 发现：当 <code>mem_ready_go === 1'b0</code>
+时，Wb_reg 走 else
+分支插入气泡（<code>wb_pc &lt;= 0</code>，全清），导致 WB 变成气泡 →
+<code>wb_valid = 0</code> → 中断落在气泡上 →
+<code>era = 0</code>、difftest 收不到异常事件、NEMU 永远停在 idle。</p>
+<p>进一步追踪证实：idle 提交那拍 MEM
+已是气泡（<code>mem_pc = 0</code>），即 idle+4 在提交 idle
+时早已不在流水线中——根本无法靠”停在 WB”拿到 era。</p>
+<p><strong>修复</strong>：不依赖 WB 内容，改为捕获 idle+4 +
+唤醒当拍注入：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// ---- IDLE 等待中断 FSM ----</span></span><br><span class="line"><span class="keyword">wire</span> wb_is_idle_commit = wb_valid &amp; (wb_inst[<span class="number">31</span>:<span class="number">15</span>]==<span class="number">17&#x27;h0C91</span>) &amp; ~wb_ex &amp; ~wb_need_cancel;</span><br><span class="line"><span class="keyword">wire</span> idle_int_pending  = |(csr_estat_is &amp; csr_ecfg_lie);</span><br><span class="line"><span class="keyword">reg</span>  idle_wait_r;</span><br><span class="line"><span class="keyword">reg</span>  [<span class="number">31</span>:<span class="number">0</span>] idle_era_r;</span><br><span class="line"></span><br><span class="line"><span class="keyword">always</span> @(<span class="keyword">posedge</span> clk) <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (rst)                    idle_wait_r &lt;= <span class="number">1&#x27;b0</span>;</span><br><span class="line">    <span class="keyword">else</span> <span class="keyword">if</span> (idle_int_pending)  idle_wait_r &lt;= <span class="number">1&#x27;b0</span>;   <span class="comment">// 被中断唤醒</span></span><br><span class="line">    <span class="keyword">else</span> <span class="keyword">if</span> (wb_ex)             idle_wait_r &lt;= <span class="number">1&#x27;b0</span>;   <span class="comment">// 异常冲刷</span></span><br><span class="line">    <span class="keyword">else</span> <span class="keyword">if</span> (wb_is_idle_commit) idle_wait_r &lt;= <span class="number">1&#x27;b1</span>;   <span class="comment">// idle 提交，进入等待</span></span><br><span class="line"><span class="keyword">end</span></span><br><span class="line"></span><br><span class="line"><span class="keyword">always</span> @(<span class="keyword">posedge</span> clk) <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (rst)                    idle_era_r &lt;= <span class="number">32&#x27;b0</span>;</span><br><span class="line">    <span class="keyword">else</span> <span class="keyword">if</span> (wb_is_idle_commit) idle_era_r &lt;= wb_pc + <span class="number">32&#x27;d4</span>;  <span class="comment">// 捕获 idle+4</span></span><br><span class="line"><span class="keyword">end</span></span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> idle_freeze = idle_wait_r &amp; ~idle_int_pending;  <span class="comment">// 冻结流水线</span></span><br><span class="line"><span class="keyword">wire</span> idle_wake   = idle_wait_r &amp;  idle_int_pending;  <span class="comment">// 唤醒当拍</span></span><br><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] csr_wb_pc_eff = idle_wake ? idle_era_r : wb_pc;</span><br></pre></td></tr></table></figure>
-
 <ul>
-<li><code>idle_wait_r</code>：idle 提交后置 1 进入等待；中断挂起或异常时清 0。</li>
-<li><code>idle_era_r</code>：idle 提交当拍捕获 <code>wb_pc + 4</code>（此拍 <code>wb_pc = idle_pc</code>）。</li>
-<li><code>idle_freeze</code>：等待期通过 <code>wb_allow_in = ~idle_freeze</code> 回压上游、停止取指，令整条流水线停顿（NEMU 也停在 idle，保持同步）。</li>
-<li><code>idle_wake</code>：被使能中断唤醒的当拍，将 <code>idle_era_r</code> 喂给 CSR 的 <code>.wb_pc</code>，使 <code>csr_era_pc &lt;= idle + 4</code>。</li>
+<li><code>idle_wait_r</code>：idle 提交后置 1
+进入等待；中断挂起或异常时清 0。</li>
+<li><code>idle_era_r</code>：idle 提交当拍捕获
+<code>wb_pc + 4</code>（此拍 <code>wb_pc = idle_pc</code>）。</li>
+<li><code>idle_freeze</code>：等待期通过
+<code>wb_allow_in = ~idle_freeze</code>
+回压上游、停止取指，令整条流水线停顿（NEMU 也停在
+idle，保持同步）。</li>
+<li><code>idle_wake</code>：被使能中断唤醒的当拍，将
+<code>idle_era_r</code> 喂给 CSR 的 <code>.wb_pc</code>，使
+<code>csr_era_pc &lt;= idle + 4</code>。</li>
 </ul>
-<hr>
-<h3 id="2-唤醒当拍中断注入"><a href="#2-唤醒当拍中断注入" class="headerlink" title="2. 唤醒当拍中断注入"></a>2. 唤醒当拍中断注入</h3><p><strong>文件</strong>：<code>core_top.v:1717-1719</code></p>
-<p><strong>问题</strong>：唤醒当拍 WB 是气泡（<code>wb_valid = 0</code>），正常的中断检测路径无法触发。</p>
-<p><strong>修复</strong>：在 trap_unit 的中断注入端口将 <code>idle_wake</code> 与正常 <code>wb_has_int</code> 合并：</p>
+<hr />
+<h3 id="唤醒当拍中断注入">2. 唤醒当拍中断注入</h3>
+<p><strong>文件</strong>：<code>core_top.v:1717-1719</code></p>
+<p><strong>问题</strong>：唤醒当拍 WB
+是气泡（<code>wb_valid = 0</code>），正常的中断检测路径无法触发。</p>
+<p><strong>修复</strong>：在 trap_unit 的中断注入端口将
+<code>idle_wake</code> 与正常 <code>wb_has_int</code> 合并：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.wb_has_int</span>((wb_has_int | idle_wake) &amp;&amp; csr_crmd_ie),</span><br></pre></td></tr></table></figure>
-
-<p>唤醒当拍在 WB（气泡）处置起 INT，触发 <code>wb_ex</code> → 跳 eentry、存 era、更新 crmd&#x2F;prmd&#x2F;estat。</p>
-<hr>
-<h3 id="3-Difftest-异常事件上报"><a href="#3-Difftest-异常事件上报" class="headerlink" title="3. Difftest 异常事件上报"></a>3. Difftest 异常事件上报</h3><p><strong>文件</strong>：<code>core_top.v:2712-2718</code></p>
-<p><strong>问题</strong>：唤醒当拍 WB 是气泡（<code>wb_valid = 0</code>），difftest 默认不上报异常事件，导致 NEMU 不会调用 <code>raise_intr</code> 唤醒，双方失配。</p>
+<p>唤醒当拍在 WB（气泡）处置起 INT，触发 <code>wb_ex</code> → 跳
+eentry、存 era、更新 crmd/prmd/estat。</p>
+<hr />
+<h3 id="difftest-异常事件上报">3. Difftest 异常事件上报</h3>
+<p><strong>文件</strong>：<code>core_top.v:2712-2718</code></p>
+<p><strong>问题</strong>：唤醒当拍 WB
+是气泡（<code>wb_valid = 0</code>），difftest 默认不上报异常事件，导致
+NEMU 不会调用 <code>raise_intr</code> 唤醒，双方失配。</p>
 <p><strong>修复</strong>：在 cmt 块中显式上报唤醒事件：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">cmt_pc    &lt;= idle_wake ? idle_era_r : debug0_wb_pc;</span><br><span class="line">cmt_ex    &lt;= (wb_valid &amp;&amp; wb_ex) || idle_wake;</span><br><span class="line">cmt_ecode &lt;= idle_wake ? <span class="number">6&#x27;h00</span> : wb_ecode;   <span class="comment">// 唤醒为中断 INT(0)</span></span><br></pre></td></tr></table></figure>
-
-<p>唤醒当拍 <code>cmt_ex = 1</code>、<code>cmt_pc = idle + 4</code>、<code>cmt_ecode = 0</code>（INT），difftest 据此调用 <code>raise_intr</code> 唤醒 NEMU，双方保持同步。</p>
-<hr>
-<h3 id="4-Wb-reg-保持分支"><a href="#4-Wb-reg-保持分支" class="headerlink" title="4. Wb_reg 保持分支"></a>4. Wb_reg 保持分支</h3><p><strong>文件</strong>：<code>Wb_reg.v:5, 171-172</code></p>
-<p><strong>问题</strong>：原 <code>Wb_reg.v</code> 在 <code>mem_ready_go === 1&#39;b0</code> 时走 else 分支插入气泡（全清零），无法在 idle 等待期间保持 WB 内容。</p>
-<p><strong>修复</strong>：新增 <code>wb_hold</code> 输入端口，在 rst&#x2F;wb_ex 之后、<code>mem_ready_go</code> latch 之前加入保持分支：</p>
+<p>唤醒当拍
+<code>cmt_ex = 1</code>、<code>cmt_pc = idle + 4</code>、<code>cmt_ecode = 0</code>（INT），difftest
+据此调用 <code>raise_intr</code> 唤醒 NEMU，双方保持同步。</p>
+<hr />
+<h3 id="wb_reg-保持分支">4. Wb_reg 保持分支</h3>
+<p><strong>文件</strong>：<code>Wb_reg.v:5, 171-172</code></p>
+<p><strong>问题</strong>：原 <code>Wb_reg.v</code> 在
+<code>mem_ready_go === 1'b0</code> 时走 else
+分支插入气泡（全清零），无法在 idle 等待期间保持 WB 内容。</p>
+<p><strong>修复</strong>：新增 <code>wb_hold</code> 输入端口，在
+rst/wb_ex 之后、<code>mem_ready_go</code> latch 之前加入保持分支：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">input</span> <span class="keyword">wire</span> wb_hold,        <span class="comment">// idle 等待期间保持 WB 内容</span></span><br><span class="line"></span><br><span class="line"><span class="comment">// ...</span></span><br><span class="line"></span><br><span class="line"><span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">if</span>(wb_hold) <span class="keyword">begin</span></span><br><span class="line">    <span class="comment">// idle 等待中断：保持 WB 现有内容，不 latch 上游、不产生气泡</span></span><br><span class="line"><span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">if</span>(!(mem_ready_go===<span class="number">1&#x27;b0</span>))<span class="keyword">begin</span></span><br><span class="line">    <span class="comment">// 正常 latch</span></span><br></pre></td></tr></table></figure>
-
-<p>由 <code>idle_freeze</code> 驱动（<code>core_top.v:1472: .wb_hold(idle_freeze)</code>）。等待期 WB 寄存器保值，不产生气泡、不 latch 上游。同时把 <code>mem_ready_go</code> 中误加的 <code>(idle_freeze) ? 1&#39;b0 :</code> 改回——该写法只会插气泡而非保持。</p>
-<hr>
-<h3 id="5-CACOP-Hit-型-IPE-误触发修复"><a href="#5-CACOP-Hit-型-IPE-误触发修复" class="headerlink" title="5. CACOP Hit 型 IPE 误触发修复"></a>5. CACOP Hit 型 IPE 误触发修复</h3><p><strong>文件</strong>：<code>core_top.v:1301-1304</code></p>
-<p><strong>问题</strong>：<code>pc = 0x1c07543c</code> 的 <code>cacop 0x10</code>（Hit 型）在 PLV3 被误判为 IPE。依据龙芯特权手册：Hit 型 cacop（<code>code[4:3] == 2&#39;b10</code>）任意特权级可执行；仅 Store Tag &#x2F; Index 型（<code>code[4:3] == 00/01</code>）需 PLV0，否则 IPE。</p>
-<p><strong>修复</strong>：在 <code>wb_priv_inst</code> 的 cacop 项加 <code>&amp; (wb_inst[4:3] != 2&#39;b10)</code>，把 Hit 型排除出 IPE 判定：</p>
+<p>由 <code>idle_freeze</code>
+驱动（<code>core_top.v:1472: .wb_hold(idle_freeze)</code>）。等待期 WB
+寄存器保值，不产生气泡、不 latch 上游。同时把 <code>mem_ready_go</code>
+中误加的 <code>(idle_freeze) ? 1'b0 :</code>
+改回——该写法只会插气泡而非保持。</p>
+<hr />
+<h3 id="cacop-hit-型-ipe-误触发修复">5. CACOP Hit 型 IPE 误触发修复</h3>
+<p><strong>文件</strong>：<code>core_top.v:1301-1304</code></p>
+<p><strong>问题</strong>：<code>pc = 0x1c07543c</code> 的
+<code>cacop 0x10</code>（Hit 型）在 PLV3 被误判为
+IPE。依据龙芯特权手册：Hit 型
+cacop（<code>code[4:3] == 2'b10</code>）任意特权级可执行；仅 Store Tag /
+Index 型（<code>code[4:3] == 00/01</code>）需 PLV0，否则 IPE。</p>
+<p><strong>修复</strong>：在 <code>wb_priv_inst</code> 的 cacop 项加
+<code>&amp; (wb_inst[4:3] != 2'b10)</code>，把 Hit 型排除出 IPE
+判定：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 注意：Hit 类 cacop（code[4:3]==2&#x27;b10）允许任意特权级执行，</span></span><br><span class="line"><span class="comment">//       仅 Store Tag / Index 类（code[4:3]==00/01）需 PLV0。</span></span><br><span class="line"><span class="keyword">wire</span> wb_priv_inst = (wb_inst[<span class="number">31</span>:<span class="number">24</span>] == <span class="number">8&#x27;h04</span>)</span><br><span class="line">                  | ((wb_inst[<span class="number">31</span>:<span class="number">22</span>] == <span class="number">10&#x27;h018</span>) &amp; (wb_inst[<span class="number">4</span>:<span class="number">3</span>] != <span class="number">2&#x27;b10</span>))</span><br><span class="line">                  | (wb_inst[<span class="number">31</span>:<span class="number">15</span>] == <span class="number">17&#x27;h0C91</span>)</span><br><span class="line">                  | (wb_inst[<span class="number">31</span>:<span class="number">26</span>]==<span class="number">6&#x27;h01</span> &amp; wb_inst[<span class="number">25</span>:<span class="number">22</span>]==<span class="number">4&#x27;h9</span> &amp; wb_inst[<span class="number">21</span>:<span class="number">20</span>]==<span class="number">2&#x27;h0</span></span><br><span class="line">                     &amp; (wb_inst[<span class="number">19</span>:<span class="number">15</span>]==<span class="number">5&#x27;h10</span> | wb_inst[<span class="number">19</span>:<span class="number">15</span>]==<span class="number">5&#x27;h13</span>));</span><br></pre></td></tr></table></figure>
-
-<p>修复后 func_lab19 从 121500 推进到 132140 条，再由 idle FSM 通关。</p>
-<hr>
-<h2 id="func-advance-状态"><a href="#func-advance-状态" class="headerlink" title="func_advance 状态"></a>func_advance 状态</h2><p>func_advance 在本次修复后 difftest 与 golden model（NEMU）<strong>零失配</strong>，一路跑到 syscall。仅剩子测试 n1 的片内时序自检未过（<code>TEST_NUM = 6</code>，<code>score = 5</code>，HIT BAD TRAP）。</p>
-<p>n1 是纯 cache 时序微基准：将 <code>0xd0100000</code> 设为 cached，执行 <code>cacop 0x11</code>（Hit-Invalidate）+ <code>preld</code> 预取后，计时一次 cached load 并要求快于 uncached 平均。因 <code>preld</code> 目前为 NOP，被计时的 load 是冷 miss，慢于 uncached → 失败。<code>preld = NOP</code> 对 Linux 合法（架构上合法），经确认暂不实现。</p>
-<hr>
-<h2 id="验证"><a href="#验证" class="headerlink" title="验证"></a>验证</h2><table>
+<p>修复后 func_lab19 从 121500 推进到 132140 条，再由 idle FSM
+通关。</p>
+<hr />
+<h2 id="func_advance-状态">func_advance 状态</h2>
+<p>func_advance 在本次修复后 difftest 与 golden
+model（NEMU）<strong>零失配</strong>，一路跑到 syscall。仅剩子测试 n1
+的片内时序自检未过（<code>TEST_NUM = 6</code>，<code>score = 5</code>，HIT
+BAD TRAP）。</p>
+<p>n1 是纯 cache 时序微基准：将 <code>0xd0100000</code> 设为
+cached，执行 <code>cacop 0x11</code>（Hit-Invalidate）+
+<code>preld</code> 预取后，计时一次 cached load 并要求快于 uncached
+平均。因 <code>preld</code> 目前为 NOP，被计时的 load 是冷 miss，慢于
+uncached → 失败。<code>preld = NOP</code> 对 Linux
+合法（架构上合法），经确认暂不实现。</p>
+<hr />
+<h2 id="验证">验证</h2>
+<table>
 <thead>
 <tr>
 <th>程序</th>
@@ -54,7 +110,8 @@
 <th>指令数</th>
 </tr>
 </thead>
-<tbody><tr>
+<tbody>
+<tr>
 <td>func_lab19</td>
 <td>END by Syscall ✅</td>
 <td>132811</td>
@@ -69,22 +126,33 @@
 <td>difftest 零失配；HIT BAD TRAP 仅因 n1 时序自检</td>
 <td>1398</td>
 </tr>
-</tbody></table>
-<hr>
-<h2 id="修改文件清单"><a href="#修改文件清单" class="headerlink" title="修改文件清单"></a>修改文件清单</h2><table>
+</tbody>
+</table>
+<hr />
+<h2 id="修改文件清单">修改文件清单</h2>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
 <thead>
 <tr>
 <th>文件</th>
 <th>变更</th>
 </tr>
 </thead>
-<tbody><tr>
+<tbody>
+<tr>
 <td><code>core_top.v</code></td>
-<td>IDLE 等待中断 FSM（<code>idle_era_r</code> 捕获 + <code>csr_wb_pc_eff</code> + <code>idle_wake</code> 注入 + difftest 上报）、CACOP Hit 型 IPE 排除、<code>Wb_reg</code> 接 <code>wb_hold</code>、<code>mem_ready_go</code> 还原</td>
+<td>IDLE 等待中断 FSM（<code>idle_era_r</code> 捕获 +
+<code>csr_wb_pc_eff</code> + <code>idle_wake</code> 注入 + difftest
+上报）、CACOP Hit 型 IPE 排除、<code>Wb_reg</code> 接
+<code>wb_hold</code>、<code>mem_ready_go</code> 还原</td>
 </tr>
 <tr>
 <td><code>Wb_reg.v</code></td>
 <td>新增 <code>wb_hold</code> 输入端口与保持分支</td>
 </tr>
-</tbody></table>
-</div><nav class="pagination"><a id="right-navigator" href="/2026/07/06/2026-07-06-UPDATED-%E5%85%A8%E9%83%A8%E6%80%A7%E8%83%BD%E6%B5%8B%E8%AF%95%E9%80%9A%E8%BF%87%E4%B8%8ECache%E5%B8%83%E5%B1%80%E4%BC%98%E5%8C%96/">2026-07-06-UPDATED:全部性能测试通过与Cache布局优化</a></nav></div><nav id="footer"><ul id="footer-links"><li><a href="/about">About</a></li><li><a href="/archives">Archives</a></li><li><a href="/atom.xml">RSS</a></li><li><a target="_blank" rel="noopener" href="https://icylogic.net" class="out-site">Theme.Carbon</a></li><li><a target="_blank" rel="noopener" href="https://github.com/hexojs/hexo" class="out-site">Hexo</a></li></ul></nav></div></body></html>
+</tbody>
+</table>
+</div><nav class="pagination"><a id="left-navigator" href="/2026/07/08/2026-07-08-UPDATED-Linux%E6%8E%A8%E8%BF%9B%E8%87%B3%E7%94%A8%E6%88%B7%E6%80%81init%E4%B8%8E%E4%B8%AD%E6%96%AD%E7%B2%BE%E7%A1%AE%E5%8C%96/">2026-07-08-UPDATED:Linux推进至用户态init与中断精确化</a><a id="right-navigator" href="/2026/07/06/2026-07-06-UPDATED-%E5%85%A8%E9%83%A8%E6%80%A7%E8%83%BD%E6%B5%8B%E8%AF%95%E9%80%9A%E8%BF%87%E4%B8%8ECache%E5%B8%83%E5%B1%80%E4%BC%98%E5%8C%96/">2026-07-06-UPDATED:全部性能测试通过与Cache布局优化</a></nav></div><nav id="footer"><ul id="footer-links"><li><a href="/about">About</a></li><li><a href="/archives">Archives</a></li><li><a href="/atom.xml">RSS</a></li><li><a target="_blank" rel="noopener" href="https://icylogic.net" class="out-site">Theme.Carbon</a></li><li><a target="_blank" rel="noopener" href="https://github.com/hexojs/hexo" class="out-site">Hexo</a></li></ul></nav></div></body></html>
