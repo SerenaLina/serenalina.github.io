@@ -1,0 +1,202 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="author" content="Tian"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>货轮泊位保险金定价模型：排队论与保险精算的交叉建模</title><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/normalize/3.0.3/normalize.min.css"><link rel="stylesheet" type="text/css" href="/css/carbon.css"><script defer="defer" src="//cdn.jsdelivr.net/jquery/2.1.4/jquery.min.js"></script><script defer="defer" src="//cdn.jsdelivr.net/jquery.pjax/1.9.5/jquery.pjax.min.js"></script><link rel="stylesheet" href="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.css" type="text/css" media="screen"><script defer="defer" type="text/javascript" src="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.pack.js"></script><script>var performFancybox = true;</script><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/katex/0.5.0/katex.min.css"><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/katex.min.js"></script><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/contrib/auto-render.min.js"></script><script>var doRenderMath = 'katex';</script><script defer="defer" src="/js/carbon.js"></script><meta name="generator" content="Hexo 8.1.1"></head><body><div id="container"><div id="banner"><h1 id="site-title"><a href="/">Tian`s Blog</a></h1><p id="site-subtitle"></p></div><div id="content"><div class="meta"><h2 class="article-title"><a href="/2026/08/12/%E8%B4%A7%E8%BD%AE%E6%B3%8A%E4%BD%8D%E4%BF%9D%E9%99%A9%E9%87%91%E5%AE%9A%E4%BB%B7%E6%A8%A1%E5%9E%8B-%E6%8E%92%E9%98%9F%E8%AE%BA%E4%B8%8E%E4%BF%9D%E9%99%A9%E7%B2%BE%E7%AE%97%E7%9A%84%E4%BA%A4%E5%8F%89%E5%BB%BA%E6%A8%A1">货轮泊位保险金定价模型：排队论与保险精算的交叉建模</a></h2><div class="article-date"><a href="javascript:void(0);" class="extra-switch">2026-08-12</a></div></div><div class="extra"><span class="Tags">Tags: <a href="/tags/%E6%95%B0%E5%AD%A6%E5%BB%BA%E6%A8%A1/">数学建模</a>, <a href="/tags/%E6%8E%92%E9%98%9F%E8%AE%BA/">排队论</a>, <a href="/tags/%E4%BF%9D%E9%99%A9%E7%B2%BE%E7%AE%97/">保险精算</a>, <a href="/tags/Erlang-C/">Erlang C</a>, <a href="/tags/Python/">Python</a>.</span></div><div class="extra"><span class="Categories">Categories: <a href="/categories/%E6%95%B0%E5%AD%A6%E5%BB%BA%E6%A8%A1/">数学建模</a>.</span></div><div class="article-content"><div class="gallery"></div><h2 id="situation背景">Situation（背景）</h2>
+<p>某码头设有 <span class="math inline"><em>c</em></span>
+个泊位供货轮停靠装卸。由于泊位有限，到港货轮需排队等待。保险公司计划推出一款保险产品：货轮到港时缴纳保费
+<span class="math inline"><em>P</em></span>，若实际等待时间超过承诺时限
+<span class="math inline"><em>T</em></span>，保险公司支付赔偿金 <span
+class="math inline"><em>C</em></span>（<span
+class="math inline"><em>C</em> ≫ <em>P</em></span>）。保费须与承诺时间关联，需为保险公司构建定价模型，探讨盈亏平衡与利润最大化条件。</p>
+<hr />
+<h2 id="task任务">Task（任务）</h2>
+<ul>
+<li>将码头作业抽象为数学模型，导出等待时间概率分布</li>
+<li>建立保险公司期望利润函数，分析盈亏平衡条件</li>
+<li>针对保费与承诺时间的不同耦合关系，构造多种定价模型并求解利润最大化</li>
+<li>通过数值实验验证理论推导，分析参数敏感性</li>
+</ul>
+<hr />
+<h2 id="action行动">Action（行动）</h2>
+<h3 id="排队论模型mmc-系统">排队论模型：M/M/c 系统</h3>
+<p>将码头作业抽象为 M/M/c 排队系统——货轮到达服从 Poisson 过程（到达率
+<span
+class="math inline"><em>λ</em></span>），每个泊位服务时间服从负指数分布（服务率
+<span class="math inline"><em>μ</em></span>），FCFS 排队。在稳定性条件
+<span
+class="math inline"><em>ρ</em> = <em>λ</em>/(<em>c</em><em>μ</em>) &lt; 1</span>
+下，导出稳态概率分布与 <strong>Erlang C
+公式</strong>（排队等待概率）：</p>
+<p><span class="math display">$$P_Q = \frac{\dfrac{a^c}{c!} \cdot
+\dfrac{1}{1-\rho}}{\displaystyle\sum_{n=0}^{c-1} \dfrac{a^n}{n!} +
+\dfrac{a^c}{c!} \cdot \dfrac{1}{1-\rho}}$$</span></p>
+<p>等待时间超出承诺时限 <span class="math inline"><em>T</em></span>
+的概率为：</p>
+<p><span
+class="math display"><em>P</em>(<em>W</em> &gt; <em>T</em>) = <em>P</em><sub><em>Q</em></sub> ⋅ <em>e</em><sup>−(<em>c</em><em>μ</em> − <em>λ</em>)<em>T</em></sup></span></p>
+<h3 id="保险利润模型">保险利润模型</h3>
+<p>单船期望利润：</p>
+<p><span
+class="math display"><em>π</em>(<em>P</em>, <em>T</em>) = <em>P</em> − <em>C</em> ⋅ <em>P</em><sub><em>Q</em></sub> ⋅ <em>e</em><sup>−(<em>c</em><em>μ</em> − <em>λ</em>)<em>T</em></sup></span></p>
+<p>盈亏平衡条件：<span
+class="math inline"><em>P</em> ≥ <em>C</em> ⋅ <em>P</em><sub><em>Q</em></sub> ⋅ <em>e</em><sup>−(<em>c</em><em>μ</em> − <em>λ</em>)<em>T</em></sup></span>。</p>
+<h3 id="三种定价模型">三种定价模型</h3>
+<p><strong>模型 A：精算公平定价 + 安全附加</strong></p>
+<p><span
+class="math display"><em>P</em>(<em>T</em>) = (1 + <em>θ</em>) ⋅ <em>C</em> ⋅ <em>P</em><sub><em>Q</em></sub> ⋅ <em>e</em><sup>−(<em>c</em><em>μ</em> − <em>λ</em>)<em>T</em></sup></span></p>
+<p>保险公司始终盈利，无约束最优为 <span
+class="math inline"><em>T</em> → 0</span>。该模型只考虑保险人视角，未纳入需求侧约束。</p>
+<p><strong>模型 B：指数衰减定价（市场驱动型）</strong></p>
+<p><span
+class="math display"><em>P</em>(<em>T</em>) = <em>p</em><sub>0</sub> <em>e</em><sup>−<em>γ</em><em>T</em></sup></span></p>
+<p>利润最大化的一阶条件给出最优承诺时间：</p>
+<p><span class="math display">$$T^* = \frac{1}{(c\mu - \lambda) -
+\gamma} \ln\left(\frac{(c\mu - \lambda) C P_Q}{\gamma
+p_0}\right)$$</span></p>
+<p>极大值条件：保费衰减率 <span class="math inline"><em>γ</em></span>
+必须低于系统过剩服务率 <span
+class="math inline"><em>c</em><em>μ</em> − <em>λ</em></span>。</p>
+<p><strong>模型 C：线性定价</strong></p>
+<p><span
+class="math display"><em>P</em>(<em>T</em>) = <em>p</em><sub>0</sub> − <em>k</em><em>T</em></span></p>
+<p>最优承诺时间：</p>
+<p><span class="math display">$$T^* = \frac{1}{c\mu - \lambda}
+\ln\left(\frac{(c\mu - \lambda) C P_Q}{k}\right)$$</span></p>
+<p>二阶条件始终满足。</p>
+<h3 id="市场约束">市场约束</h3>
+<p>引入两项市场合理性约束： - <strong>最大附加系数</strong> <span
+class="math inline"><em>L</em><sub>max</sub> = 3</span>：保费不得超过期望赔付的
+3 倍 - <strong>最低赔付概率</strong> <span
+class="math inline"><em>p</em><sub>min</sub> = 0.5%</span>：保单实际赔付概率不得低于
+0.5%</p>
+<h3 id="数值实验">数值实验</h3>
+<p>以基准参数 <span
+class="math inline">(<em>λ</em> = 8, <em>μ</em> = 3, <em>c</em> = 3, <em>C</em> = 100000, <em>p</em><sub>0</sub> = 8000, <em>γ</em> = 0.5)</span>
+开展系统的数值实验，使用
+Python（numpy/scipy/matplotlib）实现排队系统仿真、三种定价模型求解、参数扫描与可视化。</p>
+<hr />
+<h2 id="result结果">Result（结果）</h2>
+<h3 id="核心发现">核心发现</h3>
+<p><strong>1. 约束收窄策略空间</strong></p>
+<p>无约束 FOC 给出的内点解（指数模型 <span
+class="math inline"><em>T</em><sub>FOC</sub><sup>*</sup> = 5.99</span>
+天）不满足市场约束。引入 <span
+class="math inline"><em>L</em><sub>max</sub></span> 与 <span
+class="math inline"><em>p</em><sub>min</sub></span> 后，可行区间收窄至
+<span class="math inline">[4.61, 5.06]</span> 天（宽度仅 0.45
+天），最优解移至 <span
+class="math inline"><em>p</em><sub>min</sub></span> 约束边界。</p>
+<p><strong>2. 保费衰减率 <span class="math inline"><em>γ</em></span>
+的可行区间远比理论预期狭窄</strong></p>
+<p>理论区间为 <span
+class="math inline"><em>γ</em> ∈ [0.33, 1.0]</span>，但实际可行区间仅为
+<span
+class="math inline"><em>γ</em> ∈ [0.25, 0.519]</span>，宽度为理论区间的
+27%。<span class="math inline"><em>γ</em> &gt; 0.519</span>
+时盈亏平衡下界超越 <span
+class="math inline"><em>p</em><sub>min</sub></span>
+约束上界，可行区间闭合。</p>
+<p><strong>3. 利润随泊位数 <span class="math inline"><em>c</em></span>
+单调递增</strong></p>
+<p><span class="math inline"><em>c</em></span> 从 3 增到 6
+时，单船利润从 131 元跃升至 4780 元（增幅约 36 倍）。机制：<span
+class="math inline"><em>c</em></span> 增大同时压低 <span
+class="math inline"><em>P</em><sub><em>Q</em></sub></span>（赔付基准缩小）和抬高
+<span
+class="math inline"><em>c</em><em>μ</em> − <em>λ</em></span>（风险衰减加快），而保费仅以
+<span class="math inline"><em>γ</em></span>
+速率衰减——两者衰减速率之差持续扩大。</p>
+<p><strong>4. 到达率 <span class="math inline"><em>λ</em></span>
+对利润的系统性压制</strong></p>
+<p><span class="math inline"><em>λ</em></span>
+增大只产生单方向不利影响（<span
+class="math inline"><em>P</em><sub><em>Q</em></sub></span>
+上升），缺乏对冲机制。<span class="math inline"><em>λ</em> ≥ 8.5</span>
+时指数模型丧失可行解，该阈值先于系统稳定性极限 <span
+class="math inline"><em>λ</em> = 9</span>
+出现——市场约束比系统稳定性设定了更严苛的准入门槛。</p>
+<p><strong>5. 利润的数学本质</strong></p>
+<p><span class="math display">$$\pi(T) = \underbrace{p_0 e^{-\gamma
+T}}_{\text{保费端}} - \underbrace{C P_Q
+e^{-(c\mu-\lambda)T}}_{\text{赔付端}}$$</span></p>
+<p>利润来源于两项指数衰减的速率差。保险公司的盈利空间不取决于保费的绝对水平，而取决于保费与赔付随
+<span class="math inline"><em>T</em></span> 下降的”速度差”。</p>
+<h3 id="三种定价模型对比">三种定价模型对比</h3>
+<table>
+<colgroup>
+<col style="width: 18%" />
+<col style="width: 34%" />
+<col style="width: 28%" />
+<col style="width: 18%" />
+</colgroup>
+<thead>
+<tr>
+<th>模型</th>
+<th>最优 <span class="math inline"><em>T</em><sup>*</sup></span></th>
+<th>单船利润</th>
+<th>特点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>精算公平</td>
+<td>0 天（无约束）/ 5.07 天（约束）</td>
+<td>23925 元 / 约束下更低</td>
+<td>始终盈利，未考虑需求侧</td>
+</tr>
+<tr>
+<td>指数衰减</td>
+<td>5.06 天（约束边界）</td>
+<td>131 元</td>
+<td>可行区间极窄，利润微薄</td>
+</tr>
+<tr>
+<td>线性</td>
+<td>3.65 天</td>
+<td>4097 元</td>
+<td><span class="math inline"><em>T</em></span>
+较小时保费高，利润显著占优</td>
+</tr>
+</tbody>
+</table>
+<h3 id="可视化">可视化</h3>
+<p>数值实验生成 7 张分析图：三种定价模型利润曲线对比、<span
+class="math inline"><em>γ</em></span> 敏感性、<span
+class="math inline"><em>λ</em></span> 系统性影响、<span
+class="math inline">(<em>T</em>, <em>λ</em>)</span>
+利润热力图、泊位数影响、<span class="math inline"><em>γ</em></span>
+连续扫描、保费构成分解。</p>
+<figure>
+<img src="/images/math/01_三种定价模型利润曲线.png"
+alt="三种定价模型利润曲线" />
+<figcaption aria-hidden="true">三种定价模型利润曲线</figcaption>
+</figure>
+<figure>
+<img src="/images/math/02_保费衰减率gamma对比.png"
+alt="保费衰减率 γ 对比" />
+<figcaption aria-hidden="true">保费衰减率 γ 对比</figcaption>
+</figure>
+<figure>
+<img src="/images/math/03_到达率敏感性.png" alt="到达率敏感性" />
+<figcaption aria-hidden="true">到达率敏感性</figcaption>
+</figure>
+<figure>
+<img src="/images/math/04_利润热力图.png" alt="利润热力图" />
+<figcaption aria-hidden="true">利润热力图</figcaption>
+</figure>
+<figure>
+<img src="/images/math/05_泊位数影响.png" alt="泊位数影响" />
+<figcaption aria-hidden="true">泊位数影响</figcaption>
+</figure>
+<figure>
+<img src="/images/math/06_gamma敏感性.png" alt="γ 敏感性" />
+<figcaption aria-hidden="true">γ 敏感性</figcaption>
+</figure>
+<figure>
+<img src="/images/math/07_保费构成.png" alt="保费构成分解" />
+<figcaption aria-hidden="true">保费构成分解</figcaption>
+</figure>
+<hr />
+<h2 id="项目文件">项目文件</h2>
+<p>完整数学建模报告（含公式推导、数值实验、7 张可视化图表、Python
+代码）位于项目目录。</p>
+<p>代码由三个 Python
+文件协同完成：<code>insurance_model.py</code>（模型库）、<code>plot_analysis.py</code>（可视化）、<code>compute_tables.py</code>（数值表格）。</p>
+</div><nav class="pagination"><a id="left-navigator" href="/2026/08/12/AnxChip-LoongArch32%E5%85%AD%E7%BA%A7%E6%B5%81%E6%B0%B4%E7%BA%BFCPU%E8%AE%BE%E8%AE%A1%E5%9B%9E%E9%A1%BE/">AnxChip：LoongArch32 六级流水线 CPU 设计回顾</a><a id="right-navigator" href="/2026/07/08/2026-07-08-UPDATED-Linux%E6%8E%A8%E8%BF%9B%E8%87%B3%E7%94%A8%E6%88%B7%E6%80%81init%E4%B8%8E%E4%B8%AD%E6%96%AD%E7%B2%BE%E7%A1%AE%E5%8C%96/">2026-07-08-UPDATED:Linux推进至用户态init与中断精确化</a></nav></div><nav id="footer"><ul id="footer-links"><li><a href="/about">About</a></li><li><a href="/archives">Archives</a></li><li><a href="/atom.xml">RSS</a></li><li><a target="_blank" rel="noopener" href="https://icylogic.net" class="out-site">Theme.Carbon</a></li><li><a target="_blank" rel="noopener" href="https://github.com/hexojs/hexo" class="out-site">Hexo</a></li></ul></nav></div></body></html>

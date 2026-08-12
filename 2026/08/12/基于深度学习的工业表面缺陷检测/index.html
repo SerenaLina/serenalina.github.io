@@ -1,0 +1,120 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="author" content="Tian"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>基于深度学习的工业表面缺陷检测</title><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/normalize/3.0.3/normalize.min.css"><link rel="stylesheet" type="text/css" href="/css/carbon.css"><script defer="defer" src="//cdn.jsdelivr.net/jquery/2.1.4/jquery.min.js"></script><script defer="defer" src="//cdn.jsdelivr.net/jquery.pjax/1.9.5/jquery.pjax.min.js"></script><link rel="stylesheet" href="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.css" type="text/css" media="screen"><script defer="defer" type="text/javascript" src="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.pack.js"></script><script>var performFancybox = true;</script><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/katex/0.5.0/katex.min.css"><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/katex.min.js"></script><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/contrib/auto-render.min.js"></script><script>var doRenderMath = 'katex';</script><script defer="defer" src="/js/carbon.js"></script><meta name="generator" content="Hexo 8.1.1"></head><body><div id="container"><div id="banner"><h1 id="site-title"><a href="/">Tian`s Blog</a></h1><p id="site-subtitle"></p></div><div id="content"><div class="meta"><h2 class="article-title"><a href="/2026/08/12/%E5%9F%BA%E4%BA%8E%E6%B7%B1%E5%BA%A6%E5%AD%A6%E4%B9%A0%E7%9A%84%E5%B7%A5%E4%B8%9A%E8%A1%A8%E9%9D%A2%E7%BC%BA%E9%99%B7%E6%A3%80%E6%B5%8B">基于深度学习的工业表面缺陷检测</a></h2><div class="article-date"><a href="javascript:void(0);" class="extra-switch">2026-08-12</a></div></div><div class="extra"><span class="Tags">Tags: <a href="/tags/%E6%B7%B1%E5%BA%A6%E5%AD%A6%E4%B9%A0/">深度学习</a>, <a href="/tags/%E8%AE%A1%E7%AE%97%E6%9C%BA%E8%A7%86%E8%A7%89/">计算机视觉</a>, <a href="/tags/PyTorch/">PyTorch</a>, <a href="/tags/%E7%BC%BA%E9%99%B7%E6%A3%80%E6%B5%8B/">缺陷检测</a>.</span></div><div class="extra"><span class="Categories">Categories: <a href="/categories/%E6%9C%BA%E5%99%A8%E5%AD%A6%E4%B9%A0/">机器学习</a>.</span></div><div class="article-content"><div class="gallery"></div><h2 id="situation背景">Situation（背景）</h2>
+<p>工业产线上的产品表面缺陷检测传统上依赖人工目检，存在效率低、一致性差、疲劳漏检等问题。本项目面向工业质检场景，利用深度学习模型对产品表面图像进行自动缺陷分类（OK
+/ NG），替代人工目检。</p>
+<p>数据集为产线实拍图像，存在严重的类别不平衡：正常样本（OK）远多于缺陷样本（NG）。</p>
+<figure>
+<img src="/images/resnet18/ratio.png" alt="OK / NG 类别分布" />
+<figcaption aria-hidden="true">OK / NG 类别分布</figcaption>
+</figure>
+<hr />
+<h2 id="task任务">Task（任务）</h2>
+<ul>
+<li>在类别不平衡的数据集上训练一个高精度的二分类模型</li>
+<li>设计数据增强策略，扩充稀缺的 NG 样本</li>
+<li>选择合适的损失函数处理类别不平衡问题</li>
+<li>评估模型在鲁棒性测试集上的泛化能力</li>
+</ul>
+<hr />
+<h2 id="action行动">Action（行动）</h2>
+<h3 id="模型选型resnet50-迁移学习">模型选型：ResNet50 迁移学习</h3>
+<p>采用 ImageNet 预训练的 ResNet50
+作为骨干网络，替换最后的全连接层为二分类输出（<code>num_classes=2</code>）。迁移学习利用大规模数据集上学到的通用视觉特征，在小样本工业场景下收敛更快、泛化更好。</p>
+<figure>
+<img src="/images/resnet18/pdf_extracted/20250616_p3_1.png"
+alt="ResNet-18 模型结构" />
+<figcaption aria-hidden="true">ResNet-18 模型结构</figcaption>
+</figure>
+<h3 id="损失函数focal-loss-类别权重">损失函数：Focal Loss +
+类别权重</h3>
+<p>针对 OK/NG 类别不平衡问题，使用
+<code>sklearn.compute_class_weight('balanced')</code>
+计算类别权重，并自定义 Focal Loss：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">class</span> <span class="title class_">FocalLoss</span>(nn.Module):</span><br><span class="line">    <span class="keyword">def</span> <span class="title function_">__init__</span>(<span class="params">self, alpha=<span class="literal">None</span>, gamma=<span class="number">2.0</span></span>):</span><br><span class="line">        ...</span><br><span class="line">    <span class="keyword">def</span> <span class="title function_">forward</span>(<span class="params">self, inputs, targets</span>):</span><br><span class="line">        ce_loss = F.cross_entropy(inputs, targets, reduction=<span class="string">&#x27;none&#x27;</span>)</span><br><span class="line">        pt = torch.exp(-ce_loss)</span><br><span class="line">        focal_term = (<span class="number">1</span> - pt) ** <span class="variable language_">self</span>.gamma</span><br><span class="line">        <span class="keyword">if</span> <span class="variable language_">self</span>.alpha <span class="keyword">is</span> <span class="keyword">not</span> <span class="literal">None</span>:</span><br><span class="line">            alpha_factor = <span class="variable language_">self</span>.alpha[targets].to(inputs.device)</span><br><span class="line">            focal_term = alpha_factor * focal_term</span><br><span class="line">        loss = focal_term * ce_loss</span><br><span class="line">        <span class="keyword">return</span> loss.mean()</span><br></pre></td></tr></table></figure>
+<p>Focal Loss 通过 <span
+class="math inline">(1 − <em>p</em><sub><em>t</em></sub>)<sup><em>γ</em></sup></span>
+因子自动降低易分样本的权重，使模型聚焦于难分的缺陷样本，<code>gamma=2.0</code>
+时效果最佳。</p>
+<h3 id="数据增强在线-离线双轨策略">数据增强：在线 + 离线双轨策略</h3>
+<p><strong>在线增强</strong>（训练时随机施加）：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">transforms.Compose([</span><br><span class="line">    transforms.Resize((<span class="number">224</span>, <span class="number">224</span>)),</span><br><span class="line">    transforms.RandomHorizontalFlip(),</span><br><span class="line">    transforms.RandomRotation(<span class="number">10</span>),</span><br><span class="line">    transforms.ColorJitter(<span class="number">0.1</span>, <span class="number">0.1</span>, <span class="number">0.1</span>),</span><br><span class="line">    transforms.RandomAffine(degrees=<span class="number">0</span>, translate=(<span class="number">0.05</span>, <span class="number">0.05</span>), scale=(<span class="number">0.95</span>, <span class="number">1.05</span>)),</span><br><span class="line">    transforms.ToTensor(),</span><br><span class="line">    transforms.RandomErasing(p=<span class="number">0.5</span>, scale=(<span class="number">0.01</span>, <span class="number">0.1</span>), ratio=(<span class="number">0.3</span>, <span class="number">3.3</span>)),</span><br><span class="line">])</span><br></pre></td></tr></table></figure>
+<p><strong>离线增强</strong>（扩充 NG 样本集）：对 NG 样本施加 ±15°
+随机旋转 + 高斯噪声（<span
+class="math inline"><em>σ</em> = 15</span>），生成增强副本加入训练集：</p>
+<figure>
+<img src="/images/resnet18/transform_comparison.png"
+alt="数据增强对比" />
+<figcaption aria-hidden="true">数据增强对比</figcaption>
+</figure>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">def</span> <span class="title function_">transform_image</span>(<span class="params">image</span>):</span><br><span class="line">    angle = random.uniform(-<span class="number">15</span>, <span class="number">15</span>)</span><br><span class="line">    rotated = image.rotate(angle)</span><br><span class="line">    noisy = add_gaussian_noise(rotated, mean=<span class="number">0</span>, std=<span class="number">15</span>)</span><br><span class="line">    <span class="keyword">return</span> noisy</span><br></pre></td></tr></table></figure>
+<h3 id="训练策略">训练策略</h3>
+<ul>
+<li><strong>优化器</strong>：Adam，初始学习率 <span
+class="math inline">10<sup>−5</sup></span></li>
+<li><strong>学习率调度</strong>：CosineAnnealingLR，<span
+class="math inline"><em>T</em><sub><em>m</em><em>a</em><em>x</em></sub> = 100</span>，<span
+class="math inline"><em>η</em><sub><em>m</em><em>i</em><em>n</em></sub> = 10<sup>−6</sup></span></li>
+<li><strong>早停</strong>：patience=10，监控验证集损失</li>
+<li><strong>验证集划分</strong>：分层采样（stratified），80/20
+划分，保持类别比例</li>
+<li><strong>TensorBoard</strong>：记录训练/验证损失与准确率曲线</li>
+</ul>
+<figure>
+<img src="/images/resnet18/train_val_curves.png" alt="训练与验证曲线" />
+<figcaption aria-hidden="true">训练与验证曲线</figcaption>
+</figure>
+<h3 id="鲁棒性评估">鲁棒性评估</h3>
+<p>构建独立的 <code>robust_val</code>
+测试集，评估模型在未见过的数据分布上的泛化能力，输出
+precision、recall、F1 等详细指标。</p>
+<hr />
+<h2 id="result结果">Result（结果）</h2>
+<ul>
+<li>模型成功收敛，在验证集上达到高准确率</li>
+<li>Focal Loss 有效缓解了类别不平衡导致的 NG 召回率偏低问题</li>
+<li>离线数据增强显著提升了 NG 样本的分类性能</li>
+<li>鲁棒性测试集上模型保持了良好的泛化能力</li>
+</ul>
+<figure>
+<img src="/images/resnet18/confusion_matrix_epoch_1.png"
+alt="混淆矩阵（初始训练）" />
+<figcaption aria-hidden="true">混淆矩阵（初始训练）</figcaption>
+</figure>
+<figure>
+<img src="/images/resnet18/confusion_matrix_epoch_20.png"
+alt="混淆矩阵（20 epochs）" />
+<figcaption aria-hidden="true">混淆矩阵（20 epochs）</figcaption>
+</figure>
+<h3 id="关键设计决策">关键设计决策</h3>
+<table>
+<thead>
+<tr>
+<th>决策</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ResNet50 而非 ResNet18</td>
+<td>更深的网络捕捉更细粒度的缺陷纹理特征</td>
+</tr>
+<tr>
+<td>Focal Loss 而非加权 CE</td>
+<td>自适应聚焦难分样本，比固定权重更灵活</td>
+</tr>
+<tr>
+<td>CosineAnnealingLR</td>
+<td>平滑衰减避免学习率阶跃造成的训练震荡</td>
+</tr>
+<tr>
+<td>RandomErasing</td>
+<td>模拟遮挡，提升模型对局部缺陷的鲁棒性</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="项目仓库">项目仓库</h2>
+<p>代码与模型权重已开源：<a
+target="_blank" rel="noopener" href="https://github.com/SerenaLina/ResNet18">GitHub -
+SerenaLina/ResNet18</a></p>
+<p>包含：训练脚本（<code>train.py</code>）、增强训练脚本（<code>enhance_train.py</code>）、测试脚本（<code>test.py</code>）、数据增强工具（<code>enhance_comparison_gen.py</code>）、数据分布分析（<code>calculate.py</code>）、训练曲线与可视化图表。</p>
+</div><nav class="pagination"><a id="right-navigator" href="/2026/08/12/AnxChip-LoongArch32%E5%85%AD%E7%BA%A7%E6%B5%81%E6%B0%B4%E7%BA%BFCPU%E8%AE%BE%E8%AE%A1%E5%9B%9E%E9%A1%BE/">AnxChip：LoongArch32 六级流水线 CPU 设计回顾</a></nav></div><nav id="footer"><ul id="footer-links"><li><a href="/about">About</a></li><li><a href="/archives">Archives</a></li><li><a href="/atom.xml">RSS</a></li><li><a target="_blank" rel="noopener" href="https://icylogic.net" class="out-site">Theme.Carbon</a></li><li><a target="_blank" rel="noopener" href="https://github.com/hexojs/hexo" class="out-site">Hexo</a></li></ul></nav></div></body></html>

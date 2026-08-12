@@ -1,0 +1,183 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="author" content="Tian"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>AnxChip：LoongArch32 六级流水线 CPU 设计回顾</title><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/normalize/3.0.3/normalize.min.css"><link rel="stylesheet" type="text/css" href="/css/carbon.css"><script defer="defer" src="//cdn.jsdelivr.net/jquery/2.1.4/jquery.min.js"></script><script defer="defer" src="//cdn.jsdelivr.net/jquery.pjax/1.9.5/jquery.pjax.min.js"></script><link rel="stylesheet" href="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.css" type="text/css" media="screen"><script defer="defer" type="text/javascript" src="//cdn.jsdelivr.net/fancybox/2.1.5/jquery.fancybox.pack.js"></script><script>var performFancybox = true;</script><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/katex/0.5.0/katex.min.css"><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/katex.min.js"></script><script async="async" type="text/javascript" src="//cdn.jsdelivr.net/katex/0.5.0/contrib/auto-render.min.js"></script><script>var doRenderMath = 'katex';</script><script defer="defer" src="/js/carbon.js"></script><meta name="generator" content="Hexo 8.1.1"></head><body><div id="container"><div id="banner"><h1 id="site-title"><a href="/">Tian`s Blog</a></h1><p id="site-subtitle"></p></div><div id="content"><div class="meta"><h2 class="article-title"><a href="/2026/08/12/AnxChip-LoongArch32%E5%85%AD%E7%BA%A7%E6%B5%81%E6%B0%B4%E7%BA%BFCPU%E8%AE%BE%E8%AE%A1%E5%9B%9E%E9%A1%BE">AnxChip：LoongArch32 六级流水线 CPU 设计回顾</a></h2><div class="article-date"><a href="javascript:void(0);" class="extra-switch">2026-08-12</a></div></div><div class="extra"><span class="Tags">Tags: <a href="/tags/CPU%E8%AE%BE%E8%AE%A1/">CPU设计</a>, <a href="/tags/LoongArch/">LoongArch</a>, <a href="/tags/Verilog/">Verilog</a>, <a href="/tags/%E8%AE%A1%E7%AE%97%E6%9C%BA%E4%BD%93%E7%B3%BB%E7%BB%93%E6%9E%84/">计算机体系结构</a>, <a href="/tags/%E9%BE%99%E8%8A%AF%E6%9D%AF/">龙芯杯</a>.</span></div><div class="extra"><span class="Categories">Categories: <a href="/categories/%E7%A1%AC%E4%BB%B6%E8%AE%BE%E8%AE%A1/">硬件设计</a>.</span></div><div class="article-content"><div class="gallery"></div><h2 id="situation背景">Situation（背景）</h2>
+<p>AnxChip 是一个基于 LoongArch32（LA32R）指令集自行设计的六级流水线
+CPU，面向龙芯杯（NSCSCC）竞赛与 Linux
+内核仿真。项目从零开始完成微架构设计、RTL 编码、功能验证到 Linux
+启动，历时数月迭代。</p>
+<hr />
+<h2 id="task任务">Task（任务）</h2>
+<ul>
+<li>设计并实现完整支持 LA32R 指令集的六级流水线处理器</li>
+<li>支持虚拟内存（TLB）、Cache（I/D-Cache）、异常中断、特权指令</li>
+<li>通过 Chiplab 仿真环境的 NEMU difftest 全部功能测试</li>
+<li>推进 Linux 内核仿真至用户态 init</li>
+<li>目标主频 70–75MHz</li>
+</ul>
+<hr />
+<h2 id="action行动">Action（行动）</h2>
+<h3 id="微架构设计">微架构设计</h3>
+<p><strong>六级流水线</strong>：IF → ID → EXE1 → EXE2 → MEM → WB</p>
+<table>
+<thead>
+<tr>
+<th>流水级</th>
+<th>核心职责</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>IF</td>
+<td>PC 生成、I-Cache 取指、BTB 分支预测</td>
+</tr>
+<tr>
+<td>ID</td>
+<td>译码、寄存器读取、冒险检测、分支判定</td>
+</tr>
+<tr>
+<td>EXE1</td>
+<td>ALU 运算、单周期 32×32 乘法、TLB 查找</td>
+</tr>
+<tr>
+<td>EXE2</td>
+<td>数据地址计算、D-Cache 读写、Store 提交</td>
+</tr>
+<tr>
+<td>MEM</td>
+<td>D-Cache 响应处理、AXI 总线访问</td>
+</tr>
+<tr>
+<td>WB</td>
+<td>指令提交、CSR 写入、异常仲裁、中断响应</td>
+</tr>
+</tbody>
+</table>
+<p><strong>存储子系统</strong>： - 2 路组相联 I-Cache / D-Cache（各
+16KB），阻塞式状态机 - D-Cache 采用 Write-Back 策略 - 16 项全相联 TLB，3
+端口并行查找（I-TLB / D-TLB / TLBSRCH） - AXI4 总线接口（I/D 共享
+<code>sram_axi_bridge</code>）</p>
+<p><strong>冒险处理</strong>： - RAW：4 级转发（EXE1 / EXE2 / MEM / WB →
+ID）+ Load-Use 停顿 - 控制冒险：BTB 预测 + 分支冲刷 - 结构冒险：I/D
+Cache AXI 仲裁</p>
+<h3 id="验证方法">验证方法</h3>
+<p>采用 Verilator + NEMU difftest 协同仿真：DUT（RTL）与 REF（NEMU
+参考模型）逐指令比对，任何寄存器、内存、CSR 状态差异即刻报错定位。</p>
+<h3 id="关键技术挑战与解决">关键技术挑战与解决</h3>
+<p><strong>1. I-Cache 一致性与 RAW 冒险</strong></p>
+<p>I-Cache 响应重放导致取指空洞，配合 RAW
+转发路径的时序窗口产生数据不一致。通过修复 I-Cache
+状态机保持逻辑（<code>S_HIT_RESP</code> / <code>S_REF_RESP</code>
+无请求时保持）和转发 MUX 时序解决。</p>
+<p><strong>2. LAB15 流水线挂死</strong></p>
+<p><code>pc_reg.v</code> 中分支重定向嵌套在
+<code>casez(if_allow_in)</code> 内，当 IF 阶段因 I-Cache Miss 停顿时
+<code>pc_br_taken</code> 脉冲被错过。将分支重定向移出 <code>casez</code>
+作为独立优先级分支修复。</p>
+<p><strong>3. LAB19 IDLE 等待中断</strong></p>
+<p>LoongArch 语义下 IDLE 执行后处理器停止取指进入等待态，被中断唤醒后在
+<code>idle+4</code> 处响应。原设计把 IDLE 当 NOP
+直接穿过。最终方案：捕获 <code>idle_era_r = wb_pc + 4</code>，通过
+<code>idle_freeze</code> 冻结流水线，<code>idle_wake</code>
+唤醒当拍注入中断并显式上报 difftest。</p>
+<p><strong>4. 中断精确化</strong></p>
+<p>从 ID 段采样中断改为 WB
+边界实时判定（<code>wb_int_live</code>），解决 <code>csrxchg</code> 使能
+IE 后中断响应延迟问题。对 Store
+指令延迟中断到下一条指令边界（<code>~wb_dram_we</code>），避免”Store
+已写内存但中断未同步至 NEMU”的失配。</p>
+<p><strong>5. 外部中断通路</strong></p>
+<p>修复硬件中断线硬连 0
+的缺陷（<code>hw_int_in = intrpt</code>），统一外部中断走 ESTAT.IS &amp;
+ECFG.LIE 屏蔽路径，修正 TVAL 读回在到期边沿的回绕 bug。</p>
+<p><strong>6. Linux 启动推进</strong></p>
+<p>修复 PGD 系列 CSR（PGDL/PGDH/PGD）、TLBIDX 可写域掩码、SAVE2/SAVE3
+拷贝粘贴 bug、TVAL 只读同步机制等问题后，Linux 内核仿真推进至用户态
+init。</p>
+<h3 id="性能优化">性能优化</h3>
+<ul>
+<li><strong>S_LOOKUP 状态分离</strong>：I-Cache Tag
+查找与命中处理分离，缩短关键路径</li>
+<li><strong>Block RAM
+映射</strong>：<code>(* ram_style = "block" *)</code> 综合 pragma 引导
+Cache 存储体映射到块 RAM</li>
+<li><strong>分支重定向收窄</strong>：fall-through
+分支不再触发无谓冲刷</li>
+</ul>
+<hr />
+<h2 id="result结果">Result（结果）</h2>
+<table>
+<thead>
+<tr>
+<th>里程碑</th>
+<th>状态</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>全部 58 个功能测试点（func_lab1–lab19 + func_advance）</td>
+<td>✅ 通过</td>
+</tr>
+<tr>
+<td>性能测试（coremark 等）</td>
+<td>✅ 70MHz 全部通过</td>
+</tr>
+<tr>
+<td>Linux 内核仿真</td>
+<td>✅ 推进至用户态 init</td>
+</tr>
+<tr>
+<td>func_advance</td>
+<td>difftest 零失配（仅 n1 时序自检未过，preld=NOP 合法）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>最终规格</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>指令集</td>
+<td>LoongArch32 (LA32R)</td>
+</tr>
+<tr>
+<td>流水线深度</td>
+<td>6 级</td>
+</tr>
+<tr>
+<td>主频</td>
+<td>70MHz</td>
+</tr>
+<tr>
+<td>I-Cache</td>
+<td>16KB，2 路组相联</td>
+</tr>
+<tr>
+<td>D-Cache</td>
+<td>16KB，2 路组相联，Write-Back</td>
+</tr>
+<tr>
+<td>TLB</td>
+<td>16 项全相联，3 端口并行</td>
+</tr>
+<tr>
+<td>总线</td>
+<td>AXI4（I/D 共享 bridge）</td>
+</tr>
+<tr>
+<td>分支预测</td>
+<td>BTB</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="项目仓库">项目仓库</h2>
+<p>RTL 源码已开源：<a
+target="_blank" rel="noopener" href="https://github.com/SerenaLina/AnxChips">GitHub -
+SerenaLina/AnxChips</a></p>
+<p>仓库包含全部 Verilog 源文件（<code>rtl/*.v</code>），涵盖
+<code>core_top.v</code>（顶层）、<code>icache_two_way.v</code>、<code>dcache_two_way.v</code>、<code>tlb.v</code>、<code>csr.v</code>、<code>interrupt.v</code>、<code>trap_unit.v</code>、<code>pc_reg.v</code>、<code>alu.v</code>
+等模块。</p>
+</div><nav class="pagination"><a id="left-navigator" href="/2026/08/12/%E5%9F%BA%E4%BA%8E%E6%B7%B1%E5%BA%A6%E5%AD%A6%E4%B9%A0%E7%9A%84%E5%B7%A5%E4%B8%9A%E8%A1%A8%E9%9D%A2%E7%BC%BA%E9%99%B7%E6%A3%80%E6%B5%8B/">基于深度学习的工业表面缺陷检测</a><a id="right-navigator" href="/2026/08/12/%E8%B4%A7%E8%BD%AE%E6%B3%8A%E4%BD%8D%E4%BF%9D%E9%99%A9%E9%87%91%E5%AE%9A%E4%BB%B7%E6%A8%A1%E5%9E%8B-%E6%8E%92%E9%98%9F%E8%AE%BA%E4%B8%8E%E4%BF%9D%E9%99%A9%E7%B2%BE%E7%AE%97%E7%9A%84%E4%BA%A4%E5%8F%89%E5%BB%BA%E6%A8%A1/">货轮泊位保险金定价模型：排队论与保险精算的交叉建模</a></nav></div><nav id="footer"><ul id="footer-links"><li><a href="/about">About</a></li><li><a href="/archives">Archives</a></li><li><a href="/atom.xml">RSS</a></li><li><a target="_blank" rel="noopener" href="https://icylogic.net" class="out-site">Theme.Carbon</a></li><li><a target="_blank" rel="noopener" href="https://github.com/hexojs/hexo" class="out-site">Hexo</a></li></ul></nav></div></body></html>
